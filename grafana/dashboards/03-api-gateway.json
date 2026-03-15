@@ -1,0 +1,123 @@
+{
+  "title": "API Gateway",
+  "uid": "ecommerce-api-gateway",
+  "tags": ["ecommerce", "gateway"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Request Rate",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [{ "expr": "sum(rate(http_server_requests_seconds_count{application=\"api-gateway\"}[5m]))", "legendFormat": "req/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2, "type": "stat", "title": "Error Rate",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "red", "value": 0.05 }] }
+        }
+      },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{application=\"api-gateway\",outcome=\"SERVER_ERROR\"}[5m])) / sum(rate(http_server_requests_seconds_count{application=\"api-gateway\"}[5m]))",
+        "legendFormat": "Error %"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3, "type": "stat", "title": "P50 Latency",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{application=\"api-gateway\"}[5m])) by (le))",
+        "legendFormat": "P50"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4, "type": "stat", "title": "P99 Latency",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 1.0 }] }
+        }
+      },
+      "targets": [{
+        "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application=\"api-gateway\"}[5m])) by (le))",
+        "legendFormat": "P99"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5, "type": "stat", "title": "Active Requests",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "http_server_requests_active_seconds_active_count{application=\"api-gateway\"}", "legendFormat": "Active" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6, "type": "stat", "title": "Total Requests (1h)",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sum(increase(http_server_requests_seconds_count{application=\"api-gateway\"}[1h]))", "legendFormat": "Total" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Request Rate by Route",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{application=\"api-gateway\"}[5m])) by (uri)",
+        "legendFormat": "{{uri}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Response Status Distribution",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{application=\"api-gateway\"}[5m])) by (status)",
+        "legendFormat": "HTTP {{status}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Latency Percentiles",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{application=\"api-gateway\"}[5m])) by (le))", "legendFormat": "P50" },
+        { "expr": "histogram_quantile(0.90, sum(rate(http_server_requests_seconds_bucket{application=\"api-gateway\"}[5m])) by (le))", "legendFormat": "P90" },
+        { "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application=\"api-gateway\"}[5m])) by (le))", "legendFormat": "P99" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Latency by Route (P99)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application=\"api-gateway\"}[5m])) by (le, uri))",
+        "legendFormat": "{{uri}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "4xx/5xx Errors",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"api-gateway\",outcome=\"CLIENT_ERROR\"}[5m])) by (uri,status)", "legendFormat": "4xx {{uri}} {{status}}" },
+        { "expr": "sum(rate(http_server_requests_seconds_count{application=\"api-gateway\",outcome=\"SERVER_ERROR\"}[5m])) by (uri,status)", "legendFormat": "5xx {{uri}} {{status}}" }
+      ],
+      "datasource": "Prometheus"
+    }
+  ]
+}

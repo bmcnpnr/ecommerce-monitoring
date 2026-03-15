@@ -1,0 +1,111 @@
+{
+  "title": "Kafka",
+  "uid": "ecommerce-kafka",
+  "tags": ["ecommerce", "kafka", "messaging"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Brokers Online",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "targets": [{ "expr": "kafka_brokers", "legendFormat": "Brokers" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2, "type": "stat", "title": "Topics",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "count(kafka_topic_partitions)", "legendFormat": "Topics" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3, "type": "stat", "title": "Consumer Groups",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "count(kafka_consumergroup_members)", "legendFormat": "Groups" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4, "type": "stat", "title": "Total Consumer Lag",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 1000 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(kafka_consumergroup_lag) or vector(0)", "legendFormat": "Total Lag" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5, "type": "stat", "title": "Messages In Rate",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "msgps" } },
+      "targets": [{ "expr": "sum(rate(kafka_topic_partition_current_offset[5m]))", "legendFormat": "msg/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6, "type": "stat", "title": "Total Partitions",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sum(kafka_topic_partitions)", "legendFormat": "Partitions" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Consumer Group Lag by Group",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum(kafka_consumergroup_lag) by (consumergroup)",
+        "legendFormat": "{{consumergroup}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Consumer Lag by Topic",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum(kafka_consumergroup_lag) by (topic)",
+        "legendFormat": "{{topic}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Topic Message Rate (offset growth)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "msgps" } },
+      "targets": [{
+        "expr": "sum(rate(kafka_topic_partition_current_offset[5m])) by (topic)",
+        "legendFormat": "{{topic}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10, "type": "table", "title": "Consumer Group Lag Detail",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [{
+        "expr": "kafka_consumergroup_lag > 0",
+        "legendFormat": "{{consumergroup}} - {{topic}}",
+        "instant": true
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Topic Partition Offsets",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "kafka_topic_partition_current_offset",
+        "legendFormat": "{{topic}}[{{partition}}]"
+      }],
+      "datasource": "Prometheus"
+    }
+  ]
+}

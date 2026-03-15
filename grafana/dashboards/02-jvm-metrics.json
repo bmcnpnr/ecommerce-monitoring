@@ -1,0 +1,176 @@
+{
+  "title": "JVM Metrics",
+  "uid": "ecommerce-jvm",
+  "tags": ["ecommerce", "jvm"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [{
+      "name": "application",
+      "type": "query",
+      "datasource": "Prometheus",
+      "query": "label_values(jvm_memory_used_bytes, application)",
+      "multi": false,
+      "includeAll": false,
+      "refresh": 2
+    }]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Heap Used",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500000000 }, { "color": "red", "value": 800000000 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(jvm_memory_used_bytes{application=\"$application\",area=\"heap\"})", "legendFormat": "Heap Used" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Heap Max",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "expr": "sum(jvm_memory_max_bytes{application=\"$application\",area=\"heap\"})", "legendFormat": "Heap Max" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Heap Usage %",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.7 }, { "color": "red", "value": 0.85 }] }
+        }
+      },
+      "targets": [{
+        "expr": "sum(jvm_memory_used_bytes{application=\"$application\",area=\"heap\"}) / sum(jvm_memory_max_bytes{application=\"$application\",area=\"heap\"})",
+        "legendFormat": "Heap %"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Live Threads",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "jvm_threads_live_threads{application=\"$application\"}", "legendFormat": "Live" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "GC Pause Avg (5m)",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "rate(jvm_gc_pause_seconds_sum{application=\"$application\"}[5m]) / rate(jvm_gc_pause_seconds_count{application=\"$application\"}[5m])",
+        "legendFormat": "Avg GC pause"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Process CPU",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 0.8 }] }
+        }
+      },
+      "targets": [{ "expr": "process_cpu_usage{application=\"$application\"}", "legendFormat": "CPU" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Memory Pools",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        { "expr": "jvm_memory_used_bytes{application=\"$application\",area=\"heap\"}", "legendFormat": "Heap Used - {{id}}" },
+        { "expr": "jvm_memory_used_bytes{application=\"$application\",area=\"nonheap\"}", "legendFormat": "Non-Heap - {{id}}" },
+        { "expr": "jvm_memory_committed_bytes{application=\"$application\",area=\"heap\"}", "legendFormat": "Heap Committed - {{id}}" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "GC Activity",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "expr": "rate(jvm_gc_pause_seconds_count{application=\"$application\"}[5m])", "legendFormat": "GC rate - {{action}} {{cause}}" },
+        { "expr": "rate(jvm_gc_memory_allocated_bytes_total{application=\"$application\"}[5m])", "legendFormat": "Allocation rate" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Thread States",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "jvm_threads_live_threads{application=\"$application\"}", "legendFormat": "Live" },
+        { "expr": "jvm_threads_daemon_threads{application=\"$application\"}", "legendFormat": "Daemon" },
+        { "expr": "jvm_threads_peak_threads{application=\"$application\"}", "legendFormat": "Peak" },
+        { "expr": "jvm_threads_states_threads{application=\"$application\",state=\"blocked\"}", "legendFormat": "Blocked" },
+        { "expr": "jvm_threads_states_threads{application=\"$application\",state=\"waiting\"}", "legendFormat": "Waiting" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "CPU Usage",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "expr": "process_cpu_usage{application=\"$application\"}", "legendFormat": "Process CPU" },
+        { "expr": "system_cpu_usage{application=\"$application\"}", "legendFormat": "System CPU" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Loaded Classes",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 6 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "jvm_classes_loaded_classes{application=\"$application\"}", "legendFormat": "Loaded" },
+        { "expr": "rate(jvm_classes_unloaded_classes_total{application=\"$application\"}[5m])", "legendFormat": "Unload rate" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "HTTP Connection Pool",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 6 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "hikaricp_connections_active{application=\"$application\"}", "legendFormat": "Active - {{pool}}" },
+        { "expr": "hikaricp_connections_idle{application=\"$application\"}", "legendFormat": "Idle - {{pool}}" },
+        { "expr": "hikaricp_connections_max{application=\"$application\"}", "legendFormat": "Max - {{pool}}" },
+        { "expr": "hikaricp_connections_pending{application=\"$application\"}", "legendFormat": "Pending - {{pool}}" }
+      ],
+      "datasource": "Prometheus"
+    }
+  ]
+}

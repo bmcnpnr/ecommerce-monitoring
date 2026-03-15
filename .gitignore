@@ -1,0 +1,7 @@
+.env
+*.local
+grafana/data/
+prometheus/data/
+loki/data/
+tempo/data/
+alertmanager/data/

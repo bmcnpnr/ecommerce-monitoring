@@ -1,0 +1,67 @@
+global:
+  resolve_timeout: 5m
+  # Configure SMTP here if email alerts are needed:
+  # smtp_smarthost: 'smtp.gmail.com:587'
+  # smtp_from: 'alerts@yourdomain.com'
+  # smtp_auth_username: 'alerts@yourdomain.com'
+  # smtp_auth_password: '$SMTP_PASSWORD'
+
+route:
+  group_by: ['alertname', 'service', 'severity']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      group_wait: 0s
+      repeat_interval: 15m
+    - match:
+        severity: warning
+      receiver: 'warning-receiver'
+      repeat_interval: 4h
+    - match:
+        alertname: KafkaBrokerDown
+      receiver: 'critical-receiver'
+      group_wait: 0s
+    - match:
+        alertname: PostgresDown
+      receiver: 'critical-receiver'
+      group_wait: 0s
+
+receivers:
+  - name: 'default-receiver'
+    webhook_configs:
+      - url: 'http://localhost:5001/alerts'
+        send_resolved: true
+        # Placeholder webhook – replace with your actual endpoint
+        # e.g., Slack: https://hooks.slack.com/services/...
+
+  - name: 'critical-receiver'
+    webhook_configs:
+      - url: 'http://localhost:5001/alerts/critical'
+        send_resolved: true
+
+  - name: 'warning-receiver'
+    webhook_configs:
+      - url: 'http://localhost:5001/alerts/warning'
+        send_resolved: true
+
+  # Uncomment and configure for Slack:
+  # - name: 'slack-receiver'
+  #   slack_configs:
+  #     - api_url: '$SLACK_WEBHOOK_URL'
+  #       channel: '#alerts'
+  #       title: '{{ .GroupLabels.alertname }}'
+  #       text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+  #       send_resolved: true
+
+inhibit_rules:
+  # If critical alert fires, suppress the corresponding warning
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'service']

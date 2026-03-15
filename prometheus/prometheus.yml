@@ -1,0 +1,217 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: ecommerce-local
+    environment: development
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+
+  # ─── Prometheus self-monitoring ──────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: prometheus
+
+  # ─── Spring Boot microservices ───────────────────────────────────────
+  - job_name: api-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['api-gateway:8080']
+        labels:
+          service: api-gateway
+          group: application
+
+  - job_name: user-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['user-service:8081']
+        labels:
+          service: user-service
+          group: application
+
+  - job_name: product-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['product-service:8082']
+        labels:
+          service: product-service
+          group: application
+
+  - job_name: catalog-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['catalog-service:8083']
+        labels:
+          service: catalog-service
+          group: application
+
+  - job_name: order-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['order-service:8084']
+        labels:
+          service: order-service
+          group: application
+
+  - job_name: payment-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['payment-service:8085']
+        labels:
+          service: payment-service
+          group: application
+
+  - job_name: shipping-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['shipping-service:8086']
+        labels:
+          service: shipping-service
+          group: application
+
+  - job_name: review-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['review-service:8087']
+        labels:
+          service: review-service
+          group: application
+
+  - job_name: notification-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['notification-service:8088']
+        labels:
+          service: notification-service
+          group: application
+
+  - job_name: service-discovery
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['service-discovery:8761']
+        labels:
+          service: service-discovery
+          group: application
+
+  # ─── Infrastructure exporters ────────────────────────────────────────
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: node-exporter
+          group: infrastructure
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: cadvisor
+          group: infrastructure
+
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+        labels:
+          service: kafka
+          group: messaging
+
+  # ─── Database exporters ──────────────────────────────────────────────
+  - job_name: postgres-exporter-userdb
+    static_configs:
+      - targets: ['postgres-exporter-userdb:9187']
+        labels:
+          service: postgres
+          database: userdb
+          group: database
+
+  - job_name: postgres-exporter-productdb
+    static_configs:
+      - targets: ['postgres-exporter-productdb:9187']
+        labels:
+          service: postgres
+          database: productdb
+          group: database
+
+  - job_name: postgres-exporter-orderdb
+    static_configs:
+      - targets: ['postgres-exporter-orderdb:9187']
+        labels:
+          service: postgres
+          database: orderdb
+          group: database
+
+  - job_name: postgres-exporter-paymentdb
+    static_configs:
+      - targets: ['postgres-exporter-paymentdb:9187']
+        labels:
+          service: postgres
+          database: paymentdb
+          group: database
+
+  - job_name: postgres-exporter-shippingdb
+    static_configs:
+      - targets: ['postgres-exporter-shippingdb:9187']
+        labels:
+          service: postgres
+          database: shippingdb
+          group: database
+
+  - job_name: postgres-exporter-reviewdb
+    static_configs:
+      - targets: ['postgres-exporter-reviewdb:9187']
+        labels:
+          service: postgres
+          database: reviewdb
+          group: database
+
+  - job_name: postgres-exporter-catalogdb
+    static_configs:
+      - targets: ['postgres-exporter-catalogdb:9187']
+        labels:
+          service: postgres
+          database: catalogdb
+          group: database
+
+  # ─── Frontend (nginx exporter + blackbox) ────────────────────────────
+  - job_name: nginx-exporter
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+        labels:
+          service: frontend-nginx
+          group: frontend
+
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://api-gateway:8080/actuator/health
+          - http://user-service:8081/actuator/health
+          - http://product-service:8082/actuator/health
+          - http://order-service:8084/actuator/health
+          - http://payment-service:8085/actuator/health
+          - http://shipping-service:8086/actuator/health
+          - http://review-service:8087/actuator/health
+          - http://notification-service:8088/actuator/health
+          - http://service-discovery:8761/actuator/health
+          - http://frontend:80/
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

@@ -1,0 +1,183 @@
+{
+  "title": "Platform Overview",
+  "uid": "ecommerce-platform-overview",
+  "tags": ["ecommerce", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Services Up",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 9 }] },
+          "mappings": []
+        }
+      },
+      "targets": [{ "expr": "count(up{group=\"application\"} == 1)", "legendFormat": "Up" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Services Down",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        }
+      },
+      "targets": [{ "expr": "count(up{group=\"application\"} == 0) or vector(0)", "legendFormat": "Down" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total Request Rate",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "options": { "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [{ "expr": "sum(rate(http_server_requests_seconds_count{group=\"application\"}[5m]))", "legendFormat": "req/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Overall Error Rate",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "options": { "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "red", "value": 0.05 }] }
+        }
+      },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{outcome=\"SERVER_ERROR\",group=\"application\"}[5m])) / sum(rate(http_server_requests_seconds_count{group=\"application\"}[5m]))",
+        "legendFormat": "Error Rate"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "P99 Latency (all services)",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "options": { "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 1 }] }
+        }
+      },
+      "targets": [{
+        "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le))",
+        "legendFormat": "P99"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Kafka Consumer Lag (total)",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "options": { "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 1000 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(kafka_consumergroup_lag) or vector(0)", "legendFormat": "Total Lag" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Service Status",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "options": { "sortBy": [{ "displayName": "Service", "desc": false }] },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }]
+        },
+        "overrides": [{ "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "custom.displayMode", "value": "color-background" }] }]
+      },
+      "targets": [{
+        "expr": "up{group=\"application\"}",
+        "legendFormat": "{{service}}",
+        "instant": true
+      }],
+      "transformations": [{ "id": "labelsToFields", "options": { "mode": "columns" } }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Request Rate by Service",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "options": { "tooltip": { "mode": "multi" } },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 2 } } },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{group=\"application\"}[5m])) by (service)",
+        "legendFormat": "{{service}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Error Rate by Service",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "custom": { "lineWidth": 2 } } },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{outcome=\"SERVER_ERROR\",group=\"application\"}[5m])) by (service) / sum(rate(http_server_requests_seconds_count{group=\"application\"}[5m])) by (service)",
+        "legendFormat": "{{service}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "P99 Latency by Service",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2 } } },
+      "targets": [{
+        "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le, service))",
+        "legendFormat": "{{service}} P99"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "JVM Heap Usage by Service",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{
+        "expr": "sum(jvm_memory_used_bytes{area=\"heap\"}) by (application)",
+        "legendFormat": "{{application}} heap used"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Container CPU Usage",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{
+        "expr": "sum(rate(container_cpu_usage_seconds_total{name!=\"\",name!~\".*(prometheus|grafana|loki|promtail|tempo|cadvisor|alertmanager).*\"}[5m])) by (name)",
+        "legendFormat": "{{name}}"
+      }],
+      "datasource": "Prometheus"
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "title": "Error & Latency Overview",
+  "uid": "ecommerce-error-latency",
+  "tags": ["ecommerce", "errors", "latency", "slo"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "15s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Overall Error Rate (5m)",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "red", "value": 0.05 }] }
+        }
+      },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{outcome=\"SERVER_ERROR\",group=\"application\"}[5m])) / sum(rate(http_server_requests_seconds_count{group=\"application\"}[5m]))",
+        "legendFormat": "Error %"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2, "type": "stat", "title": "P50 (all services)",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le))",
+        "legendFormat": "P50"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3, "type": "stat", "title": "P90 (all services)",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.3 }, { "color": "red", "value": 0.8 }] }
+        }
+      },
+      "targets": [{
+        "expr": "histogram_quantile(0.90, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le))",
+        "legendFormat": "P90"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4, "type": "stat", "title": "P99 (all services)",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 1.5 }] }
+        }
+      },
+      "targets": [{
+        "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le))",
+        "legendFormat": "P99"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5, "type": "stat", "title": "5xx Errors (1h)",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 100 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(increase(http_server_requests_seconds_count{outcome=\"SERVER_ERROR\",group=\"application\"}[1h]))", "legendFormat": "5xx (1h)" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6, "type": "stat", "title": "4xx Errors (1h)",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sum(increase(http_server_requests_seconds_count{outcome=\"CLIENT_ERROR\",group=\"application\"}[1h]))", "legendFormat": "4xx (1h)" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Error Rate per Service",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "custom": { "lineWidth": 2 } } },
+      "targets": [{
+        "expr": "sum(rate(http_server_requests_seconds_count{outcome=\"SERVER_ERROR\",group=\"application\"}[5m])) by (service) / sum(rate(http_server_requests_seconds_count{group=\"application\"}[5m])) by (service)",
+        "legendFormat": "{{service}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Latency Heatmap (P50/P90/P99)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le, service))", "legendFormat": "{{service}} P50" },
+        { "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le, service))", "legendFormat": "{{service}} P99" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9, "type": "table", "title": "Top Slowest Endpoints (P99, last 5m)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "options": { "sortBy": [{ "displayName": "P99", "desc": true }] },
+      "targets": [{
+        "expr": "topk(20, histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{group=\"application\"}[5m])) by (le, uri, service)))",
+        "instant": true,
+        "legendFormat": "{{service}} {{uri}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10, "type": "table", "title": "Top Error-Prone Endpoints (last 5m)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "targets": [{
+        "expr": "topk(20, sum(rate(http_server_requests_seconds_count{outcome=\"SERVER_ERROR\",group=\"application\"}[5m])) by (uri, service, status))",
+        "instant": true,
+        "legendFormat": "{{service}} {{uri}} {{status}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Circuit Breaker States",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "CLOSED" }, "1": { "text": "OPEN" }, "2": { "text": "HALF_OPEN" } } }]
+        }
+      },
+      "targets": [
+        { "expr": "resilience4j_circuitbreaker_state{state=\"open\"}", "legendFormat": "OPEN - {{application}} {{name}}" },
+        { "expr": "resilience4j_circuitbreaker_state{state=\"half_open\"}", "legendFormat": "HALF_OPEN - {{application}} {{name}}" }
+      ],
+      "datasource": "Prometheus"
+    }
+  ]
+}

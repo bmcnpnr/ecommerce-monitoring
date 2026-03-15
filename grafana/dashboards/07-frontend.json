@@ -1,0 +1,119 @@
+{
+  "title": "Frontend & Availability",
+  "uid": "ecommerce-frontend",
+  "tags": ["ecommerce", "frontend", "nginx"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Frontend Up",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "targets": [{ "expr": "probe_success{instance=\"http://frontend:80/\"}", "legendFormat": "Frontend" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2, "type": "stat", "title": "Nginx Requests/s",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [{ "expr": "rate(nginx_http_requests_total[5m])", "legendFormat": "req/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3, "type": "stat", "title": "Nginx Active Connections",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "nginx_connections_active", "legendFormat": "Active" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4, "type": "stat", "title": "API Gateway Probe",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "targets": [{ "expr": "probe_success{instance=\"http://api-gateway:8080/actuator/health\"}", "legendFormat": "API GW" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5, "type": "stat", "title": "Avg Probe Duration",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "expr": "avg(probe_duration_seconds)", "legendFormat": "Avg probe time" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6, "type": "stat", "title": "Endpoints Available",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 10 }] }
+        }
+      },
+      "targets": [{ "expr": "count(probe_success == 1)", "legendFormat": "Available" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7, "type": "table", "title": "HTTP Endpoint Health (Blackbox)",
+      "gridPos": { "x": 0, "y": 4, "w": 14, "h": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left" },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": [{ "matcher": { "id": "byName", "options": "probe_success" }, "properties": [{ "id": "custom.displayMode", "value": "color-background" }] }]
+      },
+      "targets": [{ "expr": "probe_success", "instant": true, "legendFormat": "{{instance}}" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Probe Duration by Endpoint",
+      "gridPos": { "x": 14, "y": 4, "w": 10, "h": 9 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "expr": "probe_duration_seconds", "legendFormat": "{{instance}}" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Nginx Request Rate",
+      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        { "expr": "rate(nginx_http_requests_total[5m])", "legendFormat": "Total requests/s" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Nginx Connections",
+      "gridPos": { "x": 12, "y": 13, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "nginx_connections_active", "legendFormat": "Active" },
+        { "expr": "nginx_connections_accepted", "legendFormat": "Accepted" },
+        { "expr": "nginx_connections_handled", "legendFormat": "Handled" },
+        { "expr": "nginx_connections_waiting", "legendFormat": "Waiting" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Probe Success Rate Over Time",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1 } },
+      "targets": [{
+        "expr": "probe_success",
+        "legendFormat": "{{instance}}"
+      }],
+      "datasource": "Prometheus"
+    }
+  ]
+}

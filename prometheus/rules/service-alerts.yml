@@ -1,0 +1,107 @@
+groups:
+  - name: service.availability
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up{group="application"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.service }} is down"
+          description: "{{ $labels.service }} has been unreachable for more than 1 minute."
+
+      - alert: ServiceEndpointUnhealthy
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health endpoint unreachable: {{ $labels.instance }}"
+          description: "Blackbox probe failed for {{ $labels.instance }} for more than 2 minutes."
+
+  - name: service.http
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{outcome="SERVER_ERROR", group="application"}[5m])) by (service)
+          /
+          sum(rate(http_server_requests_seconds_count{group="application"}[5m])) by (service)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} has a 5xx error rate above 5% over the last 5 minutes (current: {{ $value | humanizePercentage }})."
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{outcome="SERVER_ERROR", group="application"}[5m])) by (service)
+          /
+          sum(rate(http_server_requests_seconds_count{group="application"}[5m])) by (service)
+          > 0.20
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical HTTP error rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} has a 5xx error rate above 20% (current: {{ $value | humanizePercentage }})."
+
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_server_requests_seconds_bucket{group="application"}[5m])) by (le, service)
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P99 latency on {{ $labels.service }}"
+          description: "{{ $labels.service }} P99 response time is {{ $value | humanizeDuration }} (threshold: 2s)."
+
+  - name: service.jvm
+    interval: 30s
+    rules:
+      - alert: JvmHeapUsageHigh
+        expr: |
+          (jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High JVM heap usage on {{ $labels.application }}"
+          description: "Heap usage is {{ $value | humanizePercentage }} on {{ $labels.application }} ({{ $labels.instance }})."
+
+      - alert: JvmHeapUsageCritical
+        expr: |
+          (jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"}) > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical JVM heap usage on {{ $labels.application }}"
+          description: "Heap usage is {{ $value | humanizePercentage }} on {{ $labels.application }}. OOM risk is high."
+
+      - alert: JvmGcPauseHigh
+        expr: |
+          rate(jvm_gc_pause_seconds_sum[5m]) / rate(jvm_gc_pause_seconds_count[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High GC pause time on {{ $labels.application }}"
+          description: "Average GC pause on {{ $labels.application }} is {{ $value | humanizeDuration }}."
+
+  - name: service.circuitbreaker
+    interval: 30s
+    rules:
+      - alert: CircuitBreakerOpen
+        expr: resilience4j_circuitbreaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker OPEN on {{ $labels.application }}"
+          description: "Circuit breaker '{{ $labels.name }}' is OPEN on {{ $labels.application }}."

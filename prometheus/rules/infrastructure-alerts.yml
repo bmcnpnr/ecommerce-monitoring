@@ -1,0 +1,78 @@
+groups:
+  - name: infrastructure.containers
+    interval: 30s
+    rules:
+      - alert: ContainerHighCpuUsage
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{name!="", name!~".*prometheus.*|.*grafana.*|.*cadvisor.*"}[5m])) by (name)
+          > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage for container {{ $labels.name }}"
+          description: "Container {{ $labels.name }} CPU usage is {{ $value | humanizePercentage }}."
+
+      - alert: ContainerHighMemoryUsage
+        expr: |
+          (container_memory_usage_bytes{name!=""} / container_spec_memory_limit_bytes{name!=""}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage for container {{ $labels.name }}"
+          description: "Container {{ $labels.name }} memory usage is {{ $value | humanizePercentage }} of its limit."
+
+      - alert: ContainerRestarting
+        expr: |
+          rate(container_last_seen{name!=""}[5m]) > 0
+          and
+          increase(container_start_time_seconds{name!=""}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is restarting"
+          description: "Container {{ $labels.name }} has restarted recently."
+
+  - name: infrastructure.host
+    interval: 30s
+    rules:
+      - alert: HostHighCpuLoad
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU load on host {{ $labels.instance }}"
+          description: "Host CPU usage is {{ $value }}% (threshold: 80%)."
+
+      - alert: HostOutOfMemory
+        expr: |
+          (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Host is running out of memory"
+          description: "Only {{ $value | humanizePercentage }} of host memory is available."
+
+      - alert: HostDiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space low on host"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining on /."
+
+      - alert: HostDiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space critically low on host"
+          description: "Less than 5% disk space remaining on /. Immediate action required."

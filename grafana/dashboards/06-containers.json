@@ -1,0 +1,146 @@
+{
+  "title": "Containers & Infrastructure",
+  "uid": "ecommerce-containers",
+  "tags": ["ecommerce", "infrastructure", "docker"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [{
+      "name": "container",
+      "type": "query",
+      "datasource": "Prometheus",
+      "query": "label_values(container_cpu_usage_seconds_total{name!=\"\"}, name)",
+      "multi": false,
+      "includeAll": true,
+      "allValue": ".+",
+      "refresh": 2
+    }]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Host CPU",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 85 }] }
+        }
+      },
+      "targets": [{ "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "CPU %" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2, "type": "stat", "title": "Host Memory Used",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": { "mode": "percentage", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 85 }] }
+        }
+      },
+      "targets": [{ "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "Used" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3, "type": "gauge", "title": "Memory Usage %",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.7 }, { "color": "red", "value": 0.85 }] }
+        }
+      },
+      "targets": [{ "expr": "1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "Memory %" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4, "type": "stat", "title": "Disk Used %",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.70 }, { "color": "red", "value": 0.85 }] }
+        }
+      },
+      "targets": [{ "expr": "1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})", "legendFormat": "Disk %" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5, "type": "stat", "title": "Running Containers",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "count(container_last_seen{name!=\"\"})", "legendFormat": "Containers" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6, "type": "stat", "title": "Network In/s",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [{ "expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|docker.*\"}[5m]))", "legendFormat": "In" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Container CPU Usage",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 9 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{
+        "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\"$container\",name!=\"\"}[5m])) by (name)",
+        "legendFormat": "{{name}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Container Memory Usage",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 9 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{
+        "expr": "container_memory_usage_bytes{name=~\"$container\",name!=\"\"}",
+        "legendFormat": "{{name}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Host CPU by Mode",
+      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{
+        "expr": "avg by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\"}[5m]))",
+        "legendFormat": "{{mode}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Host Network I/O",
+      "gridPos": { "x": 12, "y": 13, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|docker.*\"}[5m]))", "legendFormat": "Receive" },
+        { "expr": "sum(rate(node_network_transmit_bytes_total{device!~\"lo|docker.*\"}[5m]))", "legendFormat": "Transmit" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Host Disk I/O",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "expr": "sum(rate(node_disk_read_bytes_total[5m]))", "legendFormat": "Read" },
+        { "expr": "sum(rate(node_disk_written_bytes_total[5m]))", "legendFormat": "Write" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Container Network I/O",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 7 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "expr": "sum(rate(container_network_receive_bytes_total{name=~\"$container\",name!=\"\"}[5m])) by (name)", "legendFormat": "{{name}} rx" },
+        { "expr": "sum(rate(container_network_transmit_bytes_total{name=~\"$container\",name!=\"\"}[5m])) by (name)", "legendFormat": "{{name}} tx" }
+      ],
+      "datasource": "Prometheus"
+    }
+  ]
+}
