@@ -13,55 +13,54 @@ route:
   repeat_interval: 1h
   receiver: 'default-receiver'
   routes:
-    - match:
-        severity: critical
+    - matchers:
+        - severity = "critical"
       receiver: 'critical-receiver'
       group_wait: 0s
       repeat_interval: 15m
-    - match:
-        severity: warning
+    - matchers:
+        - severity = "warning"
       receiver: 'warning-receiver'
       repeat_interval: 4h
-    - match:
-        alertname: KafkaBrokerDown
+    - matchers:
+        - alertname = "KafkaBrokerDown"
       receiver: 'critical-receiver'
       group_wait: 0s
-    - match:
-        alertname: PostgresDown
+    - matchers:
+        - alertname = "PostgresDown"
       receiver: 'critical-receiver'
       group_wait: 0s
 
+# These receivers intentionally declare no notifier. Routing, grouping,
+# inhibition and the Alertmanager UI at :9093 all work; nothing is delivered
+# outbound. The previous configuration posted to http://localhost:5001, which
+# resolves to the Alertmanager container itself where nothing listens, so every
+# notification failed and the error was retried indefinitely.
+# To enable delivery, uncomment one of the blocks below and fill in the target.
 receivers:
   - name: 'default-receiver'
-    webhook_configs:
-      - url: 'http://localhost:5001/alerts'
-        send_resolved: true
-        # Placeholder webhook – replace with your actual endpoint
-        # e.g., Slack: https://hooks.slack.com/services/...
+    # webhook_configs:
+    #   - url: 'http://your-webhook-host:5001/alerts'
+    #     send_resolved: true
 
   - name: 'critical-receiver'
-    webhook_configs:
-      - url: 'http://localhost:5001/alerts/critical'
-        send_resolved: true
+    # slack_configs:
+    #   - api_url: '$SLACK_WEBHOOK_URL'
+    #     channel: '#alerts-critical'
+    #     title: '{{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
 
   - name: 'warning-receiver'
-    webhook_configs:
-      - url: 'http://localhost:5001/alerts/warning'
-        send_resolved: true
-
-  # Uncomment and configure for Slack:
-  # - name: 'slack-receiver'
-  #   slack_configs:
-  #     - api_url: '$SLACK_WEBHOOK_URL'
-  #       channel: '#alerts'
-  #       title: '{{ .GroupLabels.alertname }}'
-  #       text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
-  #       send_resolved: true
+    # slack_configs:
+    #   - api_url: '$SLACK_WEBHOOK_URL'
+    #     channel: '#alerts'
+    #     send_resolved: true
 
 inhibit_rules:
-  # If critical alert fires, suppress the corresponding warning
-  - source_match:
-      severity: critical
-    target_match:
-      severity: warning
+  # If a critical alert fires, suppress the corresponding warning
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
     equal: ['alertname', 'service']

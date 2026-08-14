@@ -85,8 +85,15 @@ groups:
           description: "Heap usage is {{ $value | humanizePercentage }} on {{ $labels.application }}. OOM risk is high."
 
       - alert: JvmGcPauseHigh
+        # The trailing guard matters: at a scrape boundary rate() can extrapolate
+        # the sum above zero while the count rate is still zero, so the division
+        # yields +Inf and trips the threshold. Observed on api-gateway during
+        # startup, where a single full GC produced a spurious +Inf.
         expr: |
-          rate(jvm_gc_pause_seconds_sum[5m]) / rate(jvm_gc_pause_seconds_count[5m]) > 0.5
+          (
+            rate(jvm_gc_pause_seconds_sum[5m]) / rate(jvm_gc_pause_seconds_count[5m]) > 0.5
+          )
+          and rate(jvm_gc_pause_seconds_count[5m]) > 0
         for: 5m
         labels:
           severity: warning

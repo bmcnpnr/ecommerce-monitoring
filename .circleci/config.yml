@@ -1,0 +1,84 @@
+version: 2.1
+
+jobs:
+  validate-and-package:
+    docker:
+      - image: cimg/python:3.13
+    resource_class: medium
+    environment:
+      GIT_REVISION: << pipeline.git.revision >>
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - monitoring-python-v1-{{ checksum ".circleci/requirements.txt" }}
+            - monitoring-python-v1-
+      - run:
+          name: Install validation dependencies
+          command: python -m pip install --user --requirement .circleci/requirements.txt
+      - save_cache:
+          key: monitoring-python-v1-{{ checksum ".circleci/requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Validate YAML and Grafana JSON
+          command: |
+            python - \<<'PY'
+            import json
+            from pathlib import Path
+
+            import yaml
+
+            roots = (
+                Path("alertmanager"),
+                Path("blackbox-exporter"),
+                Path("grafana"),
+                Path("loki"),
+                Path("postgres-exporter"),
+                Path("prometheus"),
+                Path("promtail"),
+                Path("tempo"),
+            )
+
+            yaml_files = []
+            json_files = []
+            for root in roots:
+                yaml_files.extend(root.rglob("*.yml"))
+                yaml_files.extend(root.rglob("*.yaml"))
+                json_files.extend(root.rglob("*.json"))
+
+            for path in sorted(yaml_files):
+                with path.open(encoding="utf-8") as stream:
+                    list(yaml.safe_load_all(stream))
+                print(f"YAML OK: {path}")
+
+            for path in sorted(json_files):
+                with path.open(encoding="utf-8") as stream:
+                    json.load(stream)
+                print(f"JSON OK: {path}")
+
+            print(f"Validated {len(yaml_files)} YAML files and {len(json_files)} JSON files.")
+            PY
+      - setup_remote_docker
+      - run:
+          name: Validate Prometheus configuration and rules
+          command: docker build --target prometheus-validation --file .circleci/validate.Dockerfile .
+      - run:
+          name: Validate Alertmanager configuration
+          command: docker build --target alertmanager-validation --file .circleci/validate.Dockerfile .
+      - run:
+          name: Package monitoring configuration
+          command: |
+            mkdir -p artifacts
+            tar -czf "artifacts/monitoring-config-${GIT_REVISION:0:12}.tar.gz" \
+              alertmanager blackbox-exporter grafana loki postgres-exporter \
+              prometheus promtail tempo
+      - store_artifacts:
+          path: artifacts
+          destination: monitoring
+
+workflows:
+  ci:
+    jobs:
+      - validate-and-package:
+          filters: pipeline.git.branch or pipeline.git.tag

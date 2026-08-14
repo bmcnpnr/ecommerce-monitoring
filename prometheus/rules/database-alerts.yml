@@ -12,16 +12,20 @@ groups:
           description: "PostgreSQL exporter for {{ $labels.database }} reports the database is unreachable."
 
       - alert: PostgresTooManyConnections
+        # max_connections is server-scoped and carries no datname label, so the
+        # previous 'sum by (datname, instance)' on both sides produced an empty
+        # datname on the denominator and never matched. Connections are summed
+        # across databases and compared per instance.
         expr: |
-          sum by (datname, instance) (pg_stat_activity_count)
+          sum by (instance) (pg_stat_activity_count)
           /
-          sum by (datname, instance) (pg_settings_max_connections)
+          on(instance) group_left max by (instance) (pg_settings_max_connections)
           > 0.80
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "PostgreSQL {{ $labels.database }} has too many connections"
+          summary: "PostgreSQL instance {{ $labels.instance }} has too many connections"
           description: "Connection usage is {{ $value | humanizePercentage }} of max_connections."
 
       - alert: PostgresDeadlocks
@@ -33,18 +37,13 @@ groups:
           summary: "PostgreSQL deadlocks detected on {{ $labels.datname }}"
           description: "Deadlock rate: {{ $value }} per second on database {{ $labels.datname }}."
 
-      - alert: PostgresReplicationLag
-        expr: pg_replication_lag > 30
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "PostgreSQL replication lag is high"
-          description: "Replication lag is {{ $value }}s on {{ $labels.instance }}."
-
       - alert: PostgresSlowQueries
+        # Two fixes: the custom query in queries.yml emits
+        # <query-key>_<column>, i.e. pg_stat_activity_max_tx_duration_max_tx_duration;
+        # and the metric is a gauge in seconds, so rate() over it could never
+        # exceed 60. Compare the gauge directly.
         expr: |
-          rate(pg_stat_activity_max_tx_duration{datname!~"template.*|postgres"}[5m]) > 60
+          pg_stat_activity_max_tx_duration_max_tx_duration{datname!~"template.*|postgres"} > 60
         for: 5m
         labels:
           severity: warning

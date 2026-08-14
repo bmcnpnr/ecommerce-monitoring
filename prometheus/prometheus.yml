@@ -201,6 +201,7 @@ scrape_configs:
           - http://api-gateway:8080/actuator/health
           - http://user-service:8081/actuator/health
           - http://product-service:8082/actuator/health
+          - http://catalog-service:8083/actuator/health
           - http://order-service:8084/actuator/health
           - http://payment-service:8085/actuator/health
           - http://shipping-service:8086/actuator/health

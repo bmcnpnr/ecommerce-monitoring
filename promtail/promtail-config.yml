@@ -27,7 +27,7 @@ scrape_configs:
         target_label: service
       # Keep only app containers (exclude monitoring stack itself for cleanliness)
       - source_labels: [container]
-        regex: (user-service|product-service|catalog-service|order-service|payment-service|shipping-service|review-service|notification-service|api-gateway|service-discovery|kafka|zookeeper|frontend)
+        regex: (user-service|product-service|catalog-service|order-service|payment-service|shipping-service|review-service|notification-service|api-gateway|service-discovery|kafka|frontend)
         action: keep
       # Add Docker image label
       - source_labels: [__meta_docker_container_image]
@@ -41,13 +41,20 @@ scrape_configs:
       # 2024-01-01 12:00:00 [main] [correlationId123] INFO  c.e.UserService - message
       - regex:
           expression: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+\[(?P<thread>[^\]]+)\]\s+\[?(?P<correlationId>[^\]\s]*)\]?\s+(?P<level>\w+)\s+(?P<logger>\S+)\s+-\s+(?P<message>.*)'
+      # Only bounded-cardinality fields may become stream labels. correlationId
+      # and traceId are unique per request and thread is near-unique; promoting
+      # them would create a new Loki stream per request. They are attached as
+      # structured metadata instead, which stays queryable without the
+      # cardinality cost.
       - labels:
           level:
+      - structured_metadata:
           correlationId:
           thread:
       - timestamp:
           source: timestamp
           format: "2006-01-02 15:04:05"
+          location: "UTC"
       # Drop DEBUG logs to reduce volume (keep INFO/WARN/ERROR)
       - match:
           selector: '{service=~".+"}'
@@ -61,5 +68,5 @@ scrape_configs:
           stages:
             - regex:
                 expression: '"traceId"\s*:\s*"(?P<traceId>[a-f0-9]+)"'
-            - labels:
+            - structured_metadata:
                 traceId:

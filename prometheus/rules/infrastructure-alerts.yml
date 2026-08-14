@@ -3,19 +3,28 @@ groups:
     interval: 30s
     rules:
       - alert: ContainerHighCpuUsage
+        # The value is in cores, not a ratio, so it is rendered as cores too —
+        # humanizePercentage here would have reported "80%" for 0.8 cores.
         expr: |
           sum(rate(container_cpu_usage_seconds_total{name!="", name!~".*prometheus.*|.*grafana.*|.*cadvisor.*"}[5m])) by (name)
-          > 0.80
+          > 1.5
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "High CPU usage for container {{ $labels.name }}"
-          description: "Container {{ $labels.name }} CPU usage is {{ $value | humanizePercentage }}."
+          description: "Container {{ $labels.name }} is using {{ $value | printf \"%.2f\" }} CPU cores."
 
       - alert: ContainerHighMemoryUsage
+        # The '> 0' guard is essential: containers without a mem_limit report a
+        # limit of 0, and dividing by it yields +Inf, which trips this alert for
+        # every such container permanently.
         expr: |
-          (container_memory_usage_bytes{name!=""} / container_spec_memory_limit_bytes{name!=""}) > 0.85
+          (
+            container_memory_usage_bytes{name!=""}
+            / on(name) container_spec_memory_limit_bytes{name!=""}
+          ) > 0.85
+          and on(name) container_spec_memory_limit_bytes{name!=""} > 0
         for: 5m
         labels:
           severity: warning
@@ -24,9 +33,10 @@ groups:
           description: "Container {{ $labels.name }} memory usage is {{ $value | humanizePercentage }} of its limit."
 
       - alert: ContainerRestarting
+        # container_start_time_seconds increasing is the whole signal. The old
+        # first clause, rate(container_last_seen[5m]) > 0, is a timestamp gauge
+        # that always advances ~1s/s and so was always true.
         expr: |
-          rate(container_last_seen{name!=""}[5m]) > 0
-          and
           increase(container_start_time_seconds{name!=""}[5m]) > 0
         for: 0m
         labels:
@@ -35,6 +45,9 @@ groups:
           summary: "Container {{ $labels.name }} is restarting"
           description: "Container {{ $labels.name }} has restarted recently."
 
+  # node-exporter runs inside the Docker engine's Linux VM, so on Docker Desktop
+  # these describe that VM's resources, not the Windows/macOS host. Wording is
+  # deliberate — treating them as host metrics leads to chasing phantom alerts.
   - name: infrastructure.host
     interval: 30s
     rules:
@@ -44,8 +57,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "High CPU load on host {{ $labels.instance }}"
-          description: "Host CPU usage is {{ $value }}% (threshold: 80%)."
+          summary: "High CPU load in the Docker VM ({{ $labels.instance }})"
+          description: "Docker VM CPU usage is {{ $value | printf \"%.1f\" }}% (threshold: 80%)."
 
       - alert: HostOutOfMemory
         expr: |

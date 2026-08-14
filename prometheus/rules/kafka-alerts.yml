@@ -29,11 +29,24 @@ groups:
           summary: "Critical Kafka consumer lag for {{ $labels.consumergroup }}"
           description: "Consumer group {{ $labels.consumergroup }} on topic {{ $labels.topic }} has a lag of {{ $value }} messages. Processing is severely behind."
 
-      - alert: KafkaTopicOffsetNotGrowing
-        expr: rate(kafka_topic_partition_current_offset[5m]) == 0
-        for: 10m
+      # Replaces a former KafkaTopicOffsetNotGrowing rule that alerted whenever a
+      # partition received no messages for 10m. That fired for all 57 partitions
+      # of an idle stack (including the 50 internal __consumer_offsets ones) and
+      # was never actionable — an idle topic is not an incident.
+      - alert: KafkaUnderReplicatedPartitions
+        expr: sum(kafka_topic_partition_under_replicated_partition) > 0
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "No messages on Kafka topic {{ $labels.topic }}"
-          description: "Topic {{ $labels.topic }} partition {{ $labels.partition }} has not received messages in 10 minutes."
+          summary: "Kafka has under-replicated partitions"
+          description: "{{ $value }} partition(s) are under-replicated; the broker may be unhealthy or a replica is offline."
+
+      - alert: KafkaPartitionHasNoLeader
+        expr: kafka_topic_partition_leader == -1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka partition {{ $labels.topic }}-{{ $labels.partition }} has no leader"
+          description: "Producers and consumers for topic {{ $labels.topic }} will fail until a leader is elected."

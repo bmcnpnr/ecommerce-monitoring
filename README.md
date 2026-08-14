@@ -69,7 +69,7 @@ Eight dashboards are auto-provisioned on startup:
 
 ## What is Instrumented
 
-### Spring Boot Services (all 9)
+### Spring Boot Services (all 10)
 - `/actuator/prometheus` — Prometheus scrape endpoint
 - JVM metrics (heap, GC, threads, classes)
 - HTTP request metrics with SLO histograms (50ms/100ms/200ms/500ms/1s/2s)
@@ -80,11 +80,11 @@ Eight dashboards are auto-provisioned on startup:
 
 ### Infrastructure
 - **cAdvisor** — CPU, memory, network, disk I/O per container
-- **Node Exporter** — Host-level CPU, memory, disk, network
+- **Node Exporter** — CPU, memory, disk and network of the Docker engine VM (on Docker Desktop this is the Linux VM, not the Windows/macOS host)
 - **Kafka Exporter** — Broker count, consumer group lag, topic offsets
 - **Kafka UI** — Web UI for browsing topics, viewing messages, and inspecting consumer groups (http://localhost:8090)
 - **Postgres Exporters** — One per database (userdb, productdb, orderdb, paymentdb, shippingdb, reviewdb, catalogdb)
-- **Blackbox Exporter** — HTTP probes for all 9 service health endpoints + frontend
+- **Blackbox Exporter** — HTTP probes for all 10 service health endpoints + frontend
 - **Nginx Exporter** — Frontend nginx active connections, request rate
 
 ### Logging (Loki + Promtail)
@@ -105,14 +105,17 @@ Four alert groups:
 
 | File | Alerts |
 |---|---|
-| `service-alerts.yml` | ServiceDown, HighErrorRate, CriticalErrorRate, HighP99Latency, JvmHeapHigh, GcPauseHigh, CircuitBreakerOpen |
-| `infrastructure-alerts.yml` | ContainerHighCpu, ContainerHighMemory, HostHighCpu, HostOutOfMemory, HostDiskLow |
-| `database-alerts.yml` | PostgresDown, TooManyConnections, Deadlocks, SlowQueries |
-| `kafka-alerts.yml` | KafkaBrokerDown, ConsumerGroupLag, TopicOffsetNotGrowing |
+| `service-alerts.yml` | ServiceDown, ServiceEndpointUnhealthy, HighErrorRate, CriticalErrorRate, HighP99Latency, JvmHeapUsageHigh, JvmHeapUsageCritical, JvmGcPauseHigh, CircuitBreakerOpen |
+| `infrastructure-alerts.yml` | ContainerHighCpuUsage, ContainerHighMemoryUsage, ContainerRestarting, HostHighCpuLoad, HostOutOfMemory, HostDiskSpaceLow, HostDiskSpaceCritical |
+| `database-alerts.yml` | PostgresDown, PostgresTooManyConnections, PostgresDeadlocks, PostgresSlowQueries |
+| `kafka-alerts.yml` | KafkaBrokerDown, KafkaConsumerGroupLag, KafkaConsumerGroupLagCritical, KafkaUnderReplicatedPartitions, KafkaPartitionHasNoLeader |
+
+> The `Host*` alerts read node-exporter, which measures the Docker engine VM.
+> On Docker Desktop they describe that VM, not the Windows/macOS host.
 
 ## Configuration
 
-Copy `.env.example` to `.env` in the `ecommerce-platform` directory and adjust as needed.
+Copy this directory's `.env.example` to `ecommerce-platform/.env` (that is where `docker compose` reads it from) and adjust as needed.
 
 Key variables:
 - `GRAFANA_ADMIN_PASSWORD` — change before deploying anywhere non-local
