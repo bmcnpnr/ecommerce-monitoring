@@ -18,6 +18,7 @@ Observability stack for the ecommerce microservices platform.
 | Postgres Exporters | Database metrics | 9187–9193 |
 | Blackbox Exporter | HTTP endpoint probing | 9115 |
 | Nginx Exporter | Frontend nginx metrics | 9113 |
+| **Kafka UI** | **Kafka topic / consumer group browser** | **8090** |
 
 ## Quick Start
 
@@ -49,6 +50,7 @@ docker compose up prometheus grafana loki promtail tempo alertmanager \
 | http://localhost:3200 | Tempo | — |
 | http://localhost:8080 | API Gateway | — |
 | http://localhost:8761 | Eureka | — |
+| http://localhost:8090 | **Kafka UI** | — |
 
 ## Grafana Dashboards
 
@@ -80,6 +82,7 @@ Eight dashboards are auto-provisioned on startup:
 - **cAdvisor** — CPU, memory, network, disk I/O per container
 - **Node Exporter** — Host-level CPU, memory, disk, network
 - **Kafka Exporter** — Broker count, consumer group lag, topic offsets
+- **Kafka UI** — Web UI for browsing topics, viewing messages, and inspecting consumer groups (http://localhost:8090)
 - **Postgres Exporters** — One per database (userdb, productdb, orderdb, paymentdb, shippingdb, reviewdb, catalogdb)
 - **Blackbox Exporter** — HTTP probes for all 9 service health endpoints + frontend
 - **Nginx Exporter** — Frontend nginx active connections, request rate

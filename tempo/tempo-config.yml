@@ -49,4 +49,3 @@ overrides:
   defaults:
     metrics_generator:
       processors: [service-graphs, span-metrics]
-      generate_native_histograms: both
