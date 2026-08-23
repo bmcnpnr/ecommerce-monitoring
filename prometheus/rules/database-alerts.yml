@@ -50,3 +50,35 @@ groups:
         annotations:
           summary: "Long-running queries on {{ $labels.datname }}"
           description: "There are queries running for more than 60 seconds on {{ $labels.datname }}."
+
+  # catalogdb is MongoDB (catalog-service's read model), scraped through
+  # percona/mongodb_exporter; see prometheus.yml job mongodb-exporter-catalogdb.
+  - name: database.mongodb
+    interval: 30s
+    rules:
+      - alert: MongoDown
+        expr: mongodb_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MongoDB is down ({{ $labels.database }})"
+          description: "mongodb_exporter for {{ $labels.database }} cannot reach the server."
+
+      - alert: MongoTooManyConnections
+        # serverStatus.connections: current in use vs. available headroom
+        # (mongodb_ss_* are the exporter's diagnosticdata metrics).
+        expr: |
+          sum by (instance) (mongodb_ss_connections{conn_type="current"})
+          /
+          (
+            sum by (instance) (mongodb_ss_connections{conn_type="current"})
+            + sum by (instance) (mongodb_ss_connections{conn_type="available"})
+          )
+          > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MongoDB instance {{ $labels.instance }} has too many connections"
+          description: "Connection usage is {{ $value | humanizePercentage }} of the server's connection limit."

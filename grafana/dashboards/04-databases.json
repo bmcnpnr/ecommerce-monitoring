@@ -1,7 +1,7 @@
 {
   "title": "Databases",
   "uid": "ecommerce-databases",
-  "tags": ["ecommerce", "database", "postgres"],
+  "tags": ["ecommerce", "database", "postgres", "mongodb"],
   "timezone": "browser",
   "schemaVersion": 38,
   "refresh": "30s",
@@ -27,7 +27,7 @@
           "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 7 }] }
         }
       },
-      "targets": [{ "expr": "count(pg_up == 1)", "legendFormat": "Up" }],
+      "targets": [{ "expr": "(sum(pg_up) or vector(0)) + (sum(mongodb_up) or vector(0))", "legendFormat": "Up" }],
       "datasource": "Prometheus"
     },
     {
@@ -88,6 +88,7 @@
       "gridPos": { "x": 0, "y": 4, "w": 24, "h": 6 },
       "targets": [
         { "expr": "pg_up", "legendFormat": "{{database}}", "instant": true },
+        { "expr": "mongodb_up", "legendFormat": "{{database}} (mongodb)", "instant": true },
         { "expr": "pg_stat_activity_count", "legendFormat": "connections", "instant": true }
       ],
       "datasource": "Prometheus"
@@ -132,6 +133,71 @@
         { "expr": "hikaricp_connections_active", "legendFormat": "{{application}} active" },
         { "expr": "hikaricp_connections_idle", "legendFormat": "{{application}} idle" },
         { "expr": "hikaricp_connections_pending", "legendFormat": "{{application}} pending" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 12, "type": "row", "title": "MongoDB — catalogdb (catalog-service read model)",
+      "gridPos": { "x": 0, "y": 26, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 13, "type": "stat", "title": "MongoDB Up",
+      "gridPos": { "x": 0, "y": 27, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "targets": [{ "expr": "mongodb_up", "legendFormat": "{{database}}" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 14, "type": "stat", "title": "MongoDB Connections",
+      "gridPos": { "x": 4, "y": 27, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sum(mongodb_ss_connections{conn_type=\"current\"})", "legendFormat": "current" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 15, "type": "stat", "title": "MongoDB Ops/s",
+      "gridPos": { "x": 8, "y": 27, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 } },
+      "targets": [{ "expr": "sum(rate(mongodb_ss_opcounters[5m]))", "legendFormat": "ops/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 16, "type": "stat", "title": "catalogdb data size",
+      "gridPos": { "x": 12, "y": 27, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "expr": "sum(mongodb_dbstats_dataSize{exported_database=\"catalogdb\"})", "legendFormat": "dataSize" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 17, "type": "stat", "title": "MongoDB Driver Pool (catalog-service)",
+      "gridPos": { "x": 16, "y": 27, "w": 8, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "sum(mongodb_driver_pool_checkedout{application=\"catalog-service\"})", "legendFormat": "checked out" },
+        { "expr": "sum(mongodb_driver_pool_size{application=\"catalog-service\"})", "legendFormat": "pool size" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 18, "type": "timeseries", "title": "MongoDB Operations by type",
+      "gridPos": { "x": 0, "y": 31, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [{ "expr": "rate(mongodb_ss_opcounters[5m])", "legendFormat": "{{legacy_op_type}}" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 19, "type": "timeseries", "title": "MongoDB Connections",
+      "gridPos": { "x": 12, "y": 31, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "mongodb_ss_connections{conn_type=\"current\"}", "legendFormat": "current" },
+        { "expr": "mongodb_ss_connections{conn_type=\"active\"}", "legendFormat": "active" }
       ],
       "datasource": "Prometheus"
     }

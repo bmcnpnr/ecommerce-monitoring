@@ -176,11 +176,14 @@ scrape_configs:
           database: reviewdb
           group: database
 
-  - job_name: postgres-exporter-catalogdb
+  # catalogdb is MongoDB (catalog-service keeps a join-free read model), so it
+  # is scraped through percona's mongodb_exporter rather than postgres-exporter.
+  # Default exporter port 9216, same Service name on compose and Kubernetes.
+  - job_name: mongodb-exporter-catalogdb
     static_configs:
-      - targets: ['postgres-exporter-catalogdb:9187']
+      - targets: ['mongodb-exporter-catalogdb:9216']
         labels:
-          service: postgres
+          service: mongodb
           database: catalogdb
           group: database
 

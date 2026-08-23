@@ -15,7 +15,8 @@ Observability stack for the ecommerce microservices platform.
 | cAdvisor | Container metrics | 9095 |
 | Node Exporter | Host metrics | 9100 |
 | Kafka Exporter | Kafka broker metrics | 9308 |
-| Postgres Exporters | Database metrics | 9187–9193 |
+| Postgres Exporters | Database metrics (6 × Postgres) | 9187–9193 |
+| MongoDB Exporter | catalogdb metrics | 9216 |
 | Blackbox Exporter | HTTP endpoint probing | 9115 |
 | Nginx Exporter | Frontend nginx metrics | 9113 |
 | **Kafka UI** | **Kafka topic / consumer group browser** | **8090** |
@@ -36,7 +37,7 @@ docker compose up prometheus grafana loki promtail tempo alertmanager \
   node-exporter cadvisor kafka-exporter blackbox-exporter nginx-exporter \
   postgres-exporter-userdb postgres-exporter-productdb postgres-exporter-orderdb \
   postgres-exporter-paymentdb postgres-exporter-shippingdb postgres-exporter-reviewdb \
-  postgres-exporter-catalogdb
+  mongodb-exporter-catalogdb
 ```
 
 ## Access
@@ -83,7 +84,8 @@ Eight dashboards are auto-provisioned on startup:
 - **Node Exporter** — CPU, memory, disk and network of the Docker engine VM (on Docker Desktop this is the Linux VM, not the Windows/macOS host)
 - **Kafka Exporter** — Broker count, consumer group lag, topic offsets
 - **Kafka UI** — Web UI for browsing topics, viewing messages, and inspecting consumer groups (http://localhost:8090)
-- **Postgres Exporters** — One per database (userdb, productdb, orderdb, paymentdb, shippingdb, reviewdb, catalogdb)
+- **Postgres Exporters** — One per Postgres database (userdb, productdb, orderdb, paymentdb, shippingdb, reviewdb)
+- **MongoDB Exporter** — percona/mongodb_exporter for catalogdb, the MongoDB behind catalog-service (`mongodb_up`, connections, opcounters, dbstats)
 - **Blackbox Exporter** — HTTP probes for all 10 service health endpoints + frontend
 - **Nginx Exporter** — Frontend nginx active connections, request rate
 
