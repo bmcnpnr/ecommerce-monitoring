@@ -2,6 +2,12 @@
 
 Observability stack for the ecommerce microservices platform.
 
+The full guide covers what each service emits, every scrape job, alert and
+dashboard, how to query logs and traces, and the known gaps. It is at
+[docs/observability.md](https://github.com/bmcnpnr/ecommerce-platform/blob/develop/docs/observability.md)
+in ecommerce-platform (`../ecommerce-platform/docs/observability.md` when the
+repositories are checked out side by side).
+
 ## Stack
 
 | Tool | Purpose | Port |
@@ -75,9 +81,9 @@ Eight dashboards are auto-provisioned on startup:
 - JVM metrics (heap, GC, threads, classes)
 - HTTP request metrics with SLO histograms (50ms/100ms/200ms/500ms/1s/2s)
 - HikariCP connection pool metrics
-- Resilience4j circuit breaker metrics
-- OTLP traces sent to Tempo on port 4318
-- Logs with `[traceId/spanId]` in every line for correlation
+- Resilience4j circuit breaker metrics (order-service only: it is the one service with an active breaker)
+- OTLP traces sent to Tempo on port 4318. Gateway → service hops are linked; Feign calls and Kafka messages are not traced.
+- Logs carry a per-service `correlationId`, but no trace or span ID
 
 ### Infrastructure
 - **cAdvisor** — CPU, memory, network, disk I/O per container
@@ -91,13 +97,13 @@ Eight dashboards are auto-provisioned on startup:
 
 ### Logging (Loki + Promtail)
 - All application container logs collected via Docker socket
-- Parsed for `level`, `correlationId`, `traceId` labels
+- Parsed for `level` and `correlationId` (no log pattern prints a `traceId`; the services also disagree on field order, so the parser misses some lines. See the observability guide.)
 - DEBUG logs dropped to reduce volume
 - Searchable in Grafana → Explore → Loki
 
 ### Tracing (Tempo)
 - All services export OTLP traces to Tempo
-- Trace IDs correlated with logs via `traceId` label
+- Trace-to-log links are configured in Grafana but find nothing yet, because log lines carry no trace ID
 - Service graph and span metrics auto-generated
 - Viewable in Grafana → Explore → Tempo
 
