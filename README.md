@@ -123,7 +123,7 @@ Four alert groups:
 
 ## Configuration
 
-Copy this directory's `.env.example` to `ecommerce-platform/.env` (that is where `docker compose` reads it from) and adjust as needed.
+Run `ecommerce-platform/init-secrets.sh` first: it creates `ecommerce-platform/.env` (where `docker compose` reads it from) with generated secrets. To change the non-secret settings in this directory's `.env.example`, append them to that file.
 
 Key variables:
 - `GRAFANA_ADMIN_PASSWORD` — change before deploying anywhere non-local
