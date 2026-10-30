@@ -1,0 +1,215 @@
+# promtool test rules prometheus/tests/kafka-alerts.test.yml
+#
+# Label sets are those kafka-exporter v1.7.0 emits (checked against a live broker):
+#   kafka_consumergroup_current_offset / _lag {consumergroup, topic, partition}
+#   kafka_consumergroup_members {consumergroup}
+#   kafka_topic_partition_current_offset / _oldest_offset / _leader {topic, partition}
+#   kafka_topic_partitions {topic}
+rule_files:
+  - ../rules/kafka-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ── consumer stuck: lag > 0 and no committed progress ────────────────────
+  - name: a consumer that stopped committing with one record waiting is stuck, however small the lag
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="notification-service", topic="shipment.created", partition="0"}'
+        values: '0x5 1x60'
+      # last commit at minute 5; the alert needs 10 minutes without a change, then 5 more
+      - series: 'kafka_consumergroup_current_offset{consumergroup="notification-service", topic="shipment.created", partition="0"}'
+        values: '6x5 7x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing"}'
+        eval_time: 25m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing", consumergroup="notification-service", topic="shipment.created", partition="0", severity="warning"}'
+            value: 1
+
+  - name: a slow consumer that keeps committing is not stuck
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="order-service", topic="payment.completed", partition="0"}'
+        values: '500x60'
+      - series: 'kafka_consumergroup_current_offset{consumergroup="order-service", topic="payment.completed", partition="0"}'
+        values: '0+10x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: an idle topic (lag 0, nothing committed lately) is not stuck
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="shipping-service", topic="payment.completed", partition="0"}'
+        values: '0x60'
+      - series: 'kafka_consumergroup_current_offset{consumergroup="shipping-service", topic="payment.completed", partition="0"}'
+        values: '42x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: a consumer that caught up again resolves the alert
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="notification-service", topic="order.placed", partition="0"}'
+        values: '3x30 0x30'
+      - series: 'kafka_consumergroup_current_offset{consumergroup="notification-service", topic="order.placed", partition="0"}'
+        values: '10x30 13x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing"}'
+        eval_time: 25m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing", consumergroup="notification-service", topic="order.placed", partition="0", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="KafkaConsumerStuck", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: a group with no live consumer
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumergroup_members{consumergroup="notification-service"}'
+        values: '0x30'
+      - series: 'kafka_consumergroup_members{consumergroup="order-service"}'
+        values: '1x30'
+      # an ad-hoc group (kafka-ui, a console consumer) with no members is normal
+      - series: 'kafka_consumergroup_members{consumergroup="console-consumer-4711"}'
+        values: '0x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaConsumerGroupNoMembers", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaConsumerGroupNoMembers", alertstate="firing", consumergroup="notification-service", severity="warning"}'
+            value: 1
+
+  # ── dead-letter topics ───────────────────────────────────────────────────
+  - name: the first dead letter on a freshly auto-created topic is reported, then it resolves
+    interval: 1m
+    input_series:
+      # the topic does not exist until minute 10; its first record makes offset 1
+      - series: 'kafka_topic_partition_current_offset{topic="shipment.created.DLT", partition="0"}'
+        values: '_x10 1x80'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing", topic="shipment.created.DLT", partition="0", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing"}'
+        eval_time: 45m
+        exp_samples: []
+
+  - name: a further dead letter on an existing topic is reported
+    interval: 1m
+    input_series:
+      - series: 'kafka_topic_partition_current_offset{topic="order.placed.DLT", partition="0"}'
+        values: '5x30 6x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing"}'
+        eval_time: 35m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaDeadLetterRecords", alertstate="firing", topic="order.placed.DLT", partition="0", severity="warning"}'
+            value: 1
+
+  - name: ordinary topics never count as dead letters
+    interval: 1m
+    input_series:
+      - series: 'kafka_topic_partition_current_offset{topic="order.placed", partition="0"}'
+        values: '0+100x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname=~"KafkaDeadLetter.*", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: more than 100 dead letters in five minutes is a flood
+    interval: 1m
+    input_series:
+      - series: 'kafka_topic_partition_current_offset{topic="payment.completed.DLT", partition="0"}'
+        values: '0+50x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaDeadLetterFlood", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaDeadLetterFlood", alertstate="firing", topic="payment.completed.DLT", severity="critical"}'
+            value: 1
+
+  # ── leaderless partitions (the old `== -1` rule could not fire) ──────────
+  - name: a topic with fewer leaders than partitions
+    interval: 1m
+    input_series:
+      - series: 'kafka_topic_partitions{topic="order.placed"}'
+        values: '3x30'
+      - series: 'kafka_topic_partition_leader{topic="order.placed", partition="0"}'
+        values: '1x30'
+      - series: 'kafka_topic_partition_leader{topic="order.placed", partition="1"}'
+        values: '1x30'
+      # all partitions led
+      - series: 'kafka_topic_partitions{topic="payment.completed"}'
+        values: '1x30'
+      - series: 'kafka_topic_partition_leader{topic="payment.completed", partition="0"}'
+        values: '1x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaPartitionHasNoLeader", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaPartitionHasNoLeader", alertstate="firing", topic="order.placed", severity="critical"}'
+            value: 1
+
+  - name: a topic whose only partition has no leader emits no leader series at all
+    interval: 1m
+    input_series:
+      - series: 'kafka_topic_partitions{topic="shipment.created"}'
+        values: '1x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaPartitionHasNoLeader", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaPartitionHasNoLeader", alertstate="firing", topic="shipment.created", severity="critical"}'
+            value: 1
+
+  # ── records lost because not even the dead-letter copy could be written ──
+  # Label set as the services' recoverer registers it (topic = source topic) plus the common tags.
+  - name: the first dropped dead letter is reported although the counter starts at 1
+    interval: 1m
+    input_series:
+      - series: 'kafka_dlt_dropped_total{application="shipping-service", topic="payment.completed"}'
+        values: '_x10 1x80'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing", application="shipping-service", topic="payment.completed", severity="critical"}'
+            value: 1
+      - expr: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing"}'
+        eval_time: 45m
+        exp_samples: []
+
+  - name: a further dropped dead letter is reported, a flat counter is not
+    interval: 1m
+    input_series:
+      - series: 'kafka_dlt_dropped_total{application="notification-service", topic="order.placed"}'
+        values: '2x30 3x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing"}'
+        eval_time: 35m
+        exp_samples:
+          - labels: 'ALERTS{alertname="KafkaDeadLetterDropped", alertstate="firing", application="notification-service", topic="order.placed", severity="critical"}'
+            value: 1

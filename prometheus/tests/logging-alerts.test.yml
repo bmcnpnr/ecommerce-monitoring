@@ -1,0 +1,211 @@
+# promtool test rules prometheus/tests/logging-alerts.test.yml
+#
+# Each case feeds the series the exporters really produce (label sets checked against
+# Spring Boot's /actuator/prometheus, promtail :9080/metrics, Loki and Tempo) and asks
+# ALERTS{alertstate="firing"} whether the rule fires at a given minute. An alert that
+# cannot fire is as bad as one that is missing, so the quiet and the spike-then-stop
+# cases matter as much as the floods.
+rule_files:
+  - ../rules/logging-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ── logback_events_total: log events per JVM ─────────────────────────────
+  - name: an idle service is not a log explosion
+    interval: 1m
+    input_series:
+      # 1 event/s
+      - series: 'logback_events_total{service="order-service", group="application", level="info"}'
+        values: '0+60x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname=~"ServiceLogRate.*", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: 200 events/s for 10 minutes warns, but is not yet critical
+    interval: 1m
+    input_series:
+      - series: 'logback_events_total{service="order-service", group="application", level="info"}'
+        values: '0+12000x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ServiceLogRateHigh", alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="ServiceLogRateHigh", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ServiceLogRateHigh", alertstate="firing", service="order-service", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ServiceLogRateCritical", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []
+
+  - name: a 2000 events/s loop is critical within a few minutes
+    interval: 1m
+    input_series:
+      - series: 'logback_events_total{service="notification-service", group="application", level="error"}'
+        values: '0+120000x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ServiceLogRateCritical", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ServiceLogRateCritical", alertstate="firing", service="notification-service", severity="critical"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ServiceErrorLogRateCritical", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ServiceErrorLogRateCritical", alertstate="firing", service="notification-service", severity="critical"}'
+            value: 1
+
+  - name: a five minute burst is not an alert
+    interval: 1m
+    input_series:
+      # 200 events/s for 5 minutes, then silence
+      - series: 'logback_events_total{service="order-service", group="application", level="info"}'
+        values: '0+12000x5 60000x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ServiceLogRateHigh", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples: []
+
+  - name: only application jobs count
+    interval: 1m
+    input_series:
+      - series: 'logback_events_total{service="something-else", group="infrastructure", level="info"}'
+        values: '0+120000x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ServiceLogRateCritical", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples: []
+
+  - name: one throttled failure site (0.1 ERROR/s) is below the error-rate alert, 1/s is above
+    interval: 1m
+    input_series:
+      - series: 'logback_events_total{service="payment-service", group="application", level="error"}'
+        values: '0+6x60'
+      - series: 'logback_events_total{service="review-service", group="application", level="error"}'
+        values: '0+60x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ServiceErrorLogRateHigh", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ServiceErrorLogRateHigh", alertstate="firing", service="review-service", severity="warning"}'
+            value: 1
+
+  # ── promtail_custom_log_*: every container, including kafka and nginx ────
+  - name: container log bytes are summed over levels and files
+    interval: 1m
+    input_series:
+      # 60 KB/s on two series of the same container = 120 KB/s > 100 KB/s
+      - series: 'promtail_custom_log_bytes_total{container="kafka", service="kafka", level="INFO", stream="stdout"}'
+        values: '0+3686400x60'
+      - series: 'promtail_custom_log_bytes_total{container="kafka", service="kafka", level="ERROR", stream="stdout"}'
+        values: '0+3686400x60'
+      # 10 KB/s: fine
+      - series: 'promtail_custom_log_bytes_total{container="frontend", service="frontend", stream="stdout"}'
+        values: '0+614400x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ContainerLogVolumeHigh", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ContainerLogVolumeHigh", alertstate="firing", container="kafka", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ContainerLogVolumeCritical", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []
+
+  - name: 2 MB/s from a container is critical
+    interval: 1m
+    input_series:
+      - series: 'promtail_custom_log_bytes_total{container="notification-service", service="notification-service", level="ERROR", stream="stdout"}'
+        values: '0+125829120x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ContainerLogVolumeCritical", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ContainerLogVolumeCritical", alertstate="firing", container="notification-service", severity="critical"}'
+            value: 1
+
+  - name: promtail shedding a container is reported per container
+    interval: 1m
+    input_series:
+      - series: 'logentry_dropped_lines_by_label_total{label_name="container", label_value="notification-service"}'
+        values: '0+600x30'
+      - series: 'logentry_dropped_lines_by_label_total{label_name="container", label_value="frontend"}'
+        values: '5x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PromtailDroppingLogs", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="PromtailDroppingLogs", alertstate="firing", label_value="notification-service", severity="warning"}'
+            value: 1
+
+  # ── Loki and Tempo refusing data ─────────────────────────────────────────
+  - name: Loki rate limiting fires, other rejections need a sustained rate
+    interval: 1m
+    input_series:
+      - series: 'loki_discarded_samples_total{reason="per_stream_rate_limit", tenant="fake"}'
+        values: '0+300x30'
+      - series: 'loki_discarded_samples_total{reason="missing_labels", tenant="fake"}'
+        values: '0+300x30'
+      # one stray out-of-order entry a minute is normal after a promtail restart
+      - series: 'loki_discarded_samples_total{reason="out_of_order", tenant="fake"}'
+        values: '0+1x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="LokiRateLimitingLogs", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LokiRateLimitingLogs", alertstate="firing", reason="per_stream_rate_limit", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="LokiRejectingLogs", alertstate="firing"}'
+        eval_time: 25m
+        exp_samples:
+          - labels: 'ALERTS{alertname="LokiRejectingLogs", alertstate="firing", reason="missing_labels", severity="warning"}'
+            value: 1
+
+  - name: Tempo discards spans
+    interval: 1m
+    input_series:
+      - series: 'tempo_discarded_spans_total{reason="rate_limited", tenant="single-tenant"}'
+        values: '0+6000x30'
+      - series: 'tempo_discarded_spans_total{reason="trace_too_large", tenant="single-tenant"}'
+        values: '0x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="TempoDiscardingSpans", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="TempoDiscardingSpans", alertstate="firing", reason="rate_limited", severity="warning"}'
+            value: 1
+
+  # ── the pipeline itself ──────────────────────────────────────────────────
+  - name: a dead Loki is critical, healthy promtail and tempo are not
+    interval: 1m
+    input_series:
+      - series: 'up{job="loki", service="loki", group="monitoring", instance="loki:3100"}'
+        values: '0x30'
+      - series: 'up{job="promtail", service="promtail", group="monitoring", instance="promtail:9080"}'
+        values: '1x30'
+      - series: 'up{job="tempo", service="tempo", group="monitoring", instance="tempo:3200"}'
+        values: '1x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="MonitoringStackDown", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="MonitoringStackDown", alertstate="firing", job="loki", service="loki", group="monitoring", instance="loki:3100", severity="critical"}'
+            value: 1
+
+  - name: promtail with no targets
+    interval: 1m
+    input_series:
+      - series: 'promtail_targets_active_total{job="promtail", service="promtail", instance="promtail:9080"}'
+        values: '0x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PromtailNoActiveTargets", alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="PromtailNoActiveTargets", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="PromtailNoActiveTargets", alertstate="firing", job="promtail", service="promtail", instance="promtail:9080", severity="warning"}'
+            value: 1

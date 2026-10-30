@@ -45,7 +45,27 @@ storage:
     local:
       path: /var/tempo/blocks
 
+# Disk bound for traces. Every request is traced at 100 % (about 4 spans of
+# ~0.4 KB each: gateway server and client, the service, a Feign hop) and the
+# actuator scrapes and probes add ~140 traces a minute, so a request storm
+# becomes a span storm. The k6 `load` profile (50 browse VUs) writes roughly
+# 300 KB/s; the Tempo default of 15 MB/s would store a storm for the whole 48 h
+# retention (2.6 TB). Over the limit the distributor answers RESOURCE_EXHAUSTED
+# (429), the OTLP exporters drop the batch, and tempo_discarded_spans_total{reason}
+# counts it (alert TempoDiscardingSpans). Worst case kept: 1 MB/s x 48 h = 172 GB
+# raw, about 35 GB compressed, and only if nobody reacts to the alert; the `stress`
+# profile (4x load) is clipped at the limit on purpose.
 overrides:
   defaults:
+    ingestion:
+      rate_strategy: local
+      rate_limit_bytes: 1000000
+      burst_size_bytes: 4000000
+    global:
+      max_bytes_per_trace: 2000000
     metrics_generator:
+      # Series the generator may write to Prometheus (span-metrics and
+      # service-graphs). Expected: a few thousand. Bounds Prometheus' memory if a
+      # span name ever carries an id.
+      max_active_series: 50000
       processors: [service-graphs, span-metrics]

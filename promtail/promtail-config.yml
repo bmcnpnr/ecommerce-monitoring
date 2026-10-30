@@ -2,11 +2,31 @@ server:
   http_listen_port: 9080
   grpc_listen_port: 0
 
+# Kept on the promtail-data volume (docker-compose.yml), not in /tmp: a recreated
+# container with no positions would re-read every container's whole json log
+# (up to 150 MB each) and push it through the limits below as one burst.
 positions:
-  filename: /tmp/positions.yaml
+  filename: /promtail/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 524288
+    timeout: 10s
+    # Loki answers 429 to a rate-limited push and promtail retries that batch in
+    # the sending loop, which blocks every other stream behind it. The default
+    # (10 retries up to 5 minutes, about 8.5 minutes in all) would let one
+    # runaway container stall all log shipping that long, so the retry budget is
+    # about 85 seconds: it rides out a Loki restart but drops a poisoned batch
+    # soon after (counted in promtail_dropped_entries_total).
+    backoff_config:
+      min_period: 500ms
+      max_period: 10s
+      max_retries: 12
+
+# (An entry longer than 64 KB is cut by Loki, not here: limits_config.max_line_size
+# with max_line_size_truncate in loki-config.yml. Promtail's own max_line_size did
+# not touch an oversized line in a test, so it is not configured.)
 
 scrape_configs:
   # ─── Docker container logs ──────────────────────────────────────────
@@ -17,6 +37,18 @@ scrape_configs:
         filters:
           - name: status
             values: ["running"]
+          # Only the application containers (not the databases, exporters or the
+          # monitoring stack itself) are discovered. This has to be a discovery
+          # filter: promtail 3.1 still tails a container that a relabel `keep`
+          # rule dropped and ships its lines with an empty label set. Loki
+          # answers 400 ("at least one label pair is required per stream") and
+          # promtail logs "final error sending batch" - once a second for as long
+          # as it ran, because it tails its own container too - while every
+          # database, exporter and monitoring line is read from the Docker API
+          # and thrown away. Same list as the Kubernetes config
+          # (k8s/60-monitoring.yaml).
+          - name: name
+            values: ["^/(user-service|product-service|catalog-service|order-service|payment-service|shipping-service|review-service|notification-service|api-gateway|service-discovery|kafka|frontend)$"]
     relabel_configs:
       # Use container name as the service label
       - source_labels: [__meta_docker_container_name]
@@ -25,10 +57,6 @@ scrape_configs:
       # Map well-known container names to service labels
       - source_labels: [container]
         target_label: service
-      # Keep only app containers (exclude monitoring stack itself for cleanliness)
-      - source_labels: [container]
-        regex: (user-service|product-service|catalog-service|order-service|payment-service|shipping-service|review-service|notification-service|api-gateway|service-discovery|kafka|frontend)
-        action: keep
       # Add Docker image label
       - source_labels: [__meta_docker_container_image]
         target_label: image
@@ -37,10 +65,40 @@ scrape_configs:
         target_label: stream
 
     pipeline_stages:
-      # Parse Spring Boot log format:
-      # 2024-01-01 12:00:00 [main] [correlationId123] INFO  c.e.UserService - message
+      # One log event per entry. Every Java service logs
+      #   2026-10-30 12:00:00 [thread] [correlationId] [traceId] LEVEL logger - message
+      # and a stack trace is the lines after it, none of which start with a
+      # timestamp. Without this stage each trace line is its own Loki entry. Lines
+      # that never match the first-line pattern (nginx) pass straight through.
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} '
+          max_wait_time: 3s
+          max_lines: 128
+      # Kafka has its own layout: "[2026-10-30 12:00:00,123] INFO message (logger)".
+      # Same two jobs, own patterns: group its stack traces, take the level.
+      - match:
+          selector: '{container="kafka"}'
+          stages:
+            - multiline:
+                firstline: '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}\] '
+                max_wait_time: 3s
+                max_lines: 128
+            - regex:
+                expression: '^\[[^\]]+\] (?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL) '
+      # The single Spring Boot console pattern (the same in all ten services):
+      #   %d{yyyy-MM-dd HH:mm:ss} [%thread] [%X{correlationId:-}] [%X{traceId:-}] %-5level %logger{36} - %msg%n
+      # correlationId and traceId are empty outside a request ("[] []"); each has
+      # its own stage so an empty one is skipped instead of being stored as an
+      # empty value on every entry. The level is limited to the six Logback names,
+      # so the stream label below can never exceed six values. The entry keeps the
+      # timestamp the container runtime recorded (nanosecond precision, no
+      # time-zone assumption) rather than the pattern's whole second.
       - regex:
-          expression: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+\[(?P<thread>[^\]]+)\]\s+\[?(?P<correlationId>[^\]\s]*)\]?\s+(?P<level>\w+)\s+(?P<logger>\S+)\s+-\s+(?P<message>.*)'
+          expression: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[(?P<thread>.*?)\] \[[^\]]*\] \[[^\]]*\] (?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s'
+      - regex:
+          expression: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[.*?\] \[(?P<correlationId>[^\]]+)\] \[[^\]]*\] (?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s'
+      - regex:
+          expression: '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[.*?\] \[[^\]]*\] \[(?P<traceId>[^\]]+)\] (?:TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s'
       # Only bounded-cardinality fields may become stream labels. correlationId
       # and traceId are unique per request and thread is near-unique; promoting
       # them would create a new Loki stream per request. They are attached as
@@ -50,23 +108,41 @@ scrape_configs:
           level:
       - structured_metadata:
           correlationId:
+          traceId:
           thread:
-      - timestamp:
-          source: timestamp
-          format: "2006-01-02 15:04:05"
-          location: "UTC"
-      # Drop DEBUG logs to reduce volume (keep INFO/WARN/ERROR)
-      - match:
-          selector: '{service=~".+"}'
-          stages:
-            - drop:
-                expression: '.*\bDEBUG\b.*'
-                drop_counter_reason: debug_log_dropped
-      # Extract traceId from JSON structured logs if present
-      - match:
-          selector: '{service=~".+"}'
-          stages:
-            - regex:
-                expression: '"traceId"\s*:\s*"(?P<traceId>[a-f0-9]+)"'
-            - structured_metadata:
-                traceId:
+      # What each container wrote, counted before anything is dropped, so the
+      # volume alerts also see DEBUG floods and the non-Java containers (Kafka,
+      # nginx). Exposed on :9080/metrics as promtail_custom_log_*_total.
+      - metrics:
+          log_lines_total:
+            type: Counter
+            description: Log entries (a stack trace counts once) read from the container
+            config:
+              match_all: true
+              action: inc
+          log_bytes_total:
+            type: Counter
+            description: Bytes of those log entries
+            config:
+              match_all: true
+              count_entry_bytes: true
+              action: add
+      # DEBUG and TRACE are not shipped (they stay in `docker logs`).
+      - drop:
+          source: level
+          expression: '^(DEBUG|TRACE)$'
+          drop_counter_reason: debug_log_dropped
+      # Per-container ceiling. A container that logs more than this (a retry loop
+      # writing a line per poll, like the notification-service poison pill that
+      # wrote 992 GB) has the excess dropped here, counted in
+      # logentry_dropped_lines_total{reason="ratelimit_drop_stage"}, instead of
+      # being pushed to Loki. 300 entries/s is about 100 KB/s of ordinary lines,
+      # under Loki's per-stream limit (128 KB/s), so for line floods this limit trips
+      # first and Loki never has to answer 429; Loki's limit is the backstop for
+      # few but huge entries.
+      - limit:
+          rate: 300
+          burst: 2000
+          drop: true
+          by_label_name: container
+          max_distinct_labels: 10000

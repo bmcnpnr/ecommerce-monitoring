@@ -37,10 +37,45 @@ schema_config:
 ruler:
   alertmanager_url: http://alertmanager:9093
 
+# A restart after a log flood replays the write-ahead log into memory. The
+# default ceiling is 4 GB, far above this container's 512 MB limit, so a large
+# WAL would be OOM-killed on every start (restart loop); past this ceiling the
+# replay flushes to disk instead of growing.
+ingester:
+  wal:
+    enabled: true
+    dir: /loki/wal
+    flush_on_shutdown: true
+    replay_memory_ceiling: 192MB
+
+# The limits below are the disk bound for logs: Loki has no size-based
+# retention, so what is accepted per second times retention_period is the most
+# that can be stored. They are sized from what the platform writes: roughly
+# 1 KB/s idle, about 40 KB/s for the whole stack under the k6 checkout load, one
+# JVM start about 60 KB in a few seconds. Anything above is a runaway, and is
+# refused with HTTP 429 and counted in loki_discarded_samples_total{reason}
+# (alert LokiDiscardingLogs). Promtail already sheds line floods per container
+# (300 entries/s), so these catch what it cannot: few but huge entries, and any
+# other client.
+#   per stream  128 KB/s sustained  = at most ~11 GB/day (raw) for one container
+#   whole stack 512 KB/s sustained  = at most ~44 GB/day (raw), ~9 GB compressed
+# The earlier 16 MB/s per tenant (32 MB burst) would have stored the 992 GB
+# incident in full: one stream at 16 MB/s is 1.4 TB/day.
 limits_config:
   retention_period: 744h
-  ingestion_rate_mb: 16
-  ingestion_burst_size_mb: 32
+  ingestion_rate_mb: 0.5
+  # Must stay above promtail's batchsize (512 KiB), or a full batch is refused
+  # whatever the rate.
+  ingestion_burst_size_mb: 4
+  per_stream_rate_limit: 128KB
+  per_stream_rate_limit_burst: 2MB
+  # An entry is a log line plus its stack trace (promtail multiline, at most 128
+  # lines). Longer entries are cut instead of refused.
+  max_line_size: 64KB
+  max_line_size_truncate: true
+  # About 12 services x 3 levels x stdout/stderr, plus pods under Kubernetes.
+  # Bounds memory (every open stream holds a chunk) if a bad label ever appears.
+  max_global_streams_per_user: 1000
   max_query_series: 10000
   # Must be >= retention_period, otherwise the oldest retained logs are kept on
   # disk but rejected by every query.

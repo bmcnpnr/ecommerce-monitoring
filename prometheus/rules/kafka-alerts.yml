@@ -43,10 +43,102 @@ groups:
           description: "{{ $value }} partition(s) are under-replicated; the broker may be unhealthy or a replica is offline."
 
       - alert: KafkaPartitionHasNoLeader
-        expr: kafka_topic_partition_leader == -1
+        # kafka-exporter v1.7.0 never emits kafka_topic_partition_leader == -1: when it
+        # cannot find a leader it logs an error and emits no sample for that partition,
+        # so the old `== -1` rule could not fire. A leaderless partition shows up as a
+        # topic that has more partitions (kafka_topic_partitions, from the metadata)
+        # than partitions with a leader.
+        expr: |
+          (
+            kafka_topic_partitions
+            - on (topic) count by (topic) (kafka_topic_partition_leader)
+            > 0
+          )
+          or
+          (kafka_topic_partitions unless on (topic) kafka_topic_partition_leader)
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Kafka partition {{ $labels.topic }}-{{ $labels.partition }} has no leader"
-          description: "Producers and consumers for topic {{ $labels.topic }} will fail until a leader is elected."
+          summary: "Kafka topic {{ $labels.topic }} has partitions without a leader"
+          description: "{{ $value }} partition(s) of topic {{ $labels.topic }} report no leader. Producers and consumers of the topic fail until one is elected."
+
+      - alert: KafkaConsumerGroupNoMembers
+        # The three groups are the application names. A group with no member has no
+        # live consumer, so its topics are not being read at all (the lag alerts only
+        # fire once the lag is large).
+        expr: |
+          kafka_consumergroup_members{consumergroup=~"(order|shipping|notification)-service"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer group {{ $labels.consumergroup }} has no members"
+          description: "No consumer of group {{ $labels.consumergroup }} is connected for 5 minutes. Check that the service is running and not stuck rebalancing (docker logs {{ $labels.consumergroup }})."
+
+      # A consumer that stops committing while records wait is stuck: a hung listener
+      # thread, a partition blocked on a record, a dead dependency. The lag alerts above
+      # use absolute thresholds (1000 / 10000) and never see this on a quiet topic: the
+      # shipment.created poison pill sat at lag 1 while it wrote 992 GB of logs. Lag > 0
+      # with a committed offset that has not moved for 10 minutes catches it at any size.
+      # (Dead-lettered records are committed, so a bad record does not trip it; a
+      # database outage does, on purpose, because the partition waits for the database.)
+      - alert: KafkaConsumerStuck
+        expr: |
+          (kafka_consumergroup_lag > 0)
+          and on (consumergroup, topic, partition)
+          (changes(kafka_consumergroup_current_offset[10m]) == 0)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer {{ $labels.consumergroup }} is stuck on {{ $labels.topic }}"
+          description: "Group {{ $labels.consumergroup }} has {{ $value }} unread record(s) on {{ $labels.topic }}-{{ $labels.partition }} and has not committed an offset for 15 minutes. Check its logs, then `kafka-consumer-groups --describe --group {{ $labels.consumergroup }}`."
+
+      # Every consumer dead-letters a record it cannot process to <topic>.DLT. The topics
+      # are auto-created on the first dead letter, so a series exists only afterwards:
+      # the second branch catches a topic that appeared within the window, which
+      # increase() would miss (it needs two samples).
+      - alert: KafkaDeadLetterRecords
+        expr: |
+          (increase(kafka_topic_partition_current_offset{topic=~".+\\.DLT"}[15m]) > 0)
+          or
+          (
+            kafka_topic_partition_current_offset{topic=~".+\\.DLT"} > 0
+            unless kafka_topic_partition_current_offset{topic=~".+\\.DLT"} offset 15m
+          )
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Records were dead-lettered to {{ $labels.topic }}"
+          description: "A consumer gave up on a record and moved it to {{ $labels.topic }} in the last 15 minutes. Read it with `kafka-console-consumer --topic {{ $labels.topic }} --from-beginning --property print.headers=true` (the headers name the failing consumer and the exception), fix the cause, then replay or drop it."
+
+      - alert: KafkaDeadLetterFlood
+        expr: |
+          sum by (topic) (increase(kafka_topic_partition_current_offset{topic=~".+\\.DLT"}[5m])) > 100
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} records dead-lettered to {{ $labels.topic }} in 5 minutes"
+          description: "Far more than isolated bad records: a producer is sending something no consumer can process (schema mismatch after a deploy?). Expect log and disk pressure; the topic is capped by Kafka's retention.bytes."
+
+      # A record that could not even be dead-lettered (the broker refuses its copy for good) is
+      # skipped so the partition keeps moving: the event is lost, no topic holds it any more. The
+      # services' dead-letter recoverer counts these as kafka_dlt_dropped_total{topic=<source topic>}.
+      # Same two branches as KafkaDeadLetterRecords: the counter only appears at its first increment.
+      - alert: KafkaDeadLetterDropped
+        expr: |
+          (increase(kafka_dlt_dropped_total[15m]) > 0)
+          or
+          (
+            kafka_dlt_dropped_total > 0
+            unless kafka_dlt_dropped_total offset 15m
+          )
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.application }} dropped a {{ $labels.topic }} record it could not dead-letter"
+          description: "The record was neither processed nor written to {{ $labels.topic }}.DLT, so it is gone. `docker logs {{ $labels.application }}` has one ERROR naming the key and the reason (usually a record too large for the broker); the original is still on {{ $labels.topic }} until retention removes it, so replay it from there once the cause is fixed."

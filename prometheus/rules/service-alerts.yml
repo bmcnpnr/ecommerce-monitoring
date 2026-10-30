@@ -105,10 +105,21 @@ groups:
     interval: 30s
     rules:
       - alert: CircuitBreakerOpen
-        expr: resilience4j_circuitbreaker_state{state="open"} == 1
-        for: 1m
+        # A breaker that cannot close cycles open -> half_open (a few trial calls) -> open
+        # every wait-duration, and resilience4j exports one 0/1 series per state. The old
+        # rule watched state="open" alone, so every half-open phase reset its `for` clock
+        # and a breaker that stayed broken could drop out of firing. Open, half-open and
+        # forced-open count together, and the breaker has to be in one of them for three
+        # minutes: a single trip that closes again on its first trial call does not alert.
+        # Breakers: product-service in catalog-, order- and review-service, order-service
+        # in payment-service.
+        expr: |
+          max by (service, application, name) (
+            resilience4j_circuitbreaker_state{state=~"open|half_open|forced_open"}
+          ) == 1
+        for: 3m
         labels:
           severity: warning
         annotations:
-          summary: "Circuit breaker OPEN on {{ $labels.application }}"
-          description: "Circuit breaker '{{ $labels.name }}' is OPEN on {{ $labels.application }}."
+          summary: "Circuit breaker '{{ $labels.name }}' is not closed on {{ $labels.application }}"
+          description: "Circuit breaker '{{ $labels.name }}' on {{ $labels.application }} has been open or half-open for 3 minutes: calls to the dependency it protects are failing or being short-circuited."

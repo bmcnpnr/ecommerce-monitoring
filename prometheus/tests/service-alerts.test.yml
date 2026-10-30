@@ -1,0 +1,49 @@
+# promtool test rules prometheus/tests/service-alerts.test.yml
+#
+# Only the rules changed for the resilience work are covered here (CircuitBreakerOpen).
+# resilience4j-micrometer exports one 0/1 series per breaker and state:
+#   resilience4j_circuitbreaker_state{name, state="closed|open|half_open|disabled|forced_open"}
+rule_files:
+  - ../rules/service-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a breaker that cycles between open and half-open is reported, one that closes again at once is not
+    interval: 1m
+    input_series:
+      # payment-service -> order-service stays broken: open for two minutes, one half-open trial call, repeat
+      - series: 'resilience4j_circuitbreaker_state{service="payment-service", application="payment-service", name="order-service", state="open"}'
+        values: '1 1 0 1 1 0 1 1 0 1 1 0 1 1 0 1 1 0 1 1 0 1 1 0 1 1 0 1 1 0'
+      - series: 'resilience4j_circuitbreaker_state{service="payment-service", application="payment-service", name="order-service", state="half_open"}'
+        values: '0 0 1 0 0 1 0 0 1 0 0 1 0 0 1 0 0 1 0 0 1 0 0 1 0 0 1 0 0 1'
+      - series: 'resilience4j_circuitbreaker_state{service="payment-service", application="payment-service", name="order-service", state="closed"}'
+        values: '0x30'
+      # order-service -> product-service trips for two minutes and recovers
+      - series: 'resilience4j_circuitbreaker_state{service="order-service", application="order-service", name="product-service", state="open"}'
+        values: '0 0 1 1 0x26'
+      - series: 'resilience4j_circuitbreaker_state{service="order-service", application="order-service", name="product-service", state="closed"}'
+        values: '1 1 0 0 1x26'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="CircuitBreakerOpen", alertstate="firing"}'
+        eval_time: 2m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="CircuitBreakerOpen", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="CircuitBreakerOpen", alertstate="firing", service="payment-service", application="payment-service", name="order-service", severity="warning"}'
+            value: 1
+
+  - name: a forced-open breaker is not closed either
+    interval: 1m
+    input_series:
+      - series: 'resilience4j_circuitbreaker_state{service="review-service", application="review-service", name="product-service", state="forced_open"}'
+        values: '1x30'
+      - series: 'resilience4j_circuitbreaker_state{service="review-service", application="review-service", name="product-service", state="closed"}'
+        values: '0x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="CircuitBreakerOpen", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="CircuitBreakerOpen", alertstate="firing", service="review-service", application="review-service", name="product-service", severity="warning"}'
+            value: 1

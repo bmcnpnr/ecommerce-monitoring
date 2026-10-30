@@ -1,0 +1,92 @@
+# Transactional outbox (order-, payment- and shipping-service).
+#
+# A state change and the event that announces it are written in one database
+# transaction; a relay publishes the rows to Kafka and deletes them. While Kafka is
+# unreachable the rows pile up and the relay retries with back-off (1 s up to 30 s),
+# logging at most one WARN a minute. The metrics below are the only way to see that
+# state from outside:
+#   outbox_events_pending           gauge, rows waiting to be published
+#   outbox_events_parked            gauge, rows that failed permanently and need a
+#                                   person (UPDATE outbox_event SET parked_at = NULL ...)
+#   outbox_events_published_total   counter, rows acknowledged by Kafka
+#   outbox_publish_failures_total   counter, failed publish attempts
+groups:
+  - name: service.outbox
+    interval: 30s
+    rules:
+      - alert: OutboxBacklog
+        # Rows normally live for one relay tick (500 ms). Fifty waiting for five
+        # minutes means the relay is not getting them out.
+        expr: |
+          outbox_events_pending > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} has {{ $value | printf \"%.0f\" }} events waiting in its outbox"
+          description: "Events written by {{ $labels.application }} are not reaching Kafka. Downstream services (shipping, notification) do not see those orders and payments until the relay catches up. Check Kafka and `docker logs {{ $labels.application }}`."
+
+      - alert: OutboxBacklogGrowing
+        # The level alerts need a backlog of 50; a relay that publishes slower than the
+        # service writes shows as a backlog that keeps growing long before that: 20 more
+        # rows than 15 minutes ago and still rising.
+        expr: |
+          (outbox_events_pending - outbox_events_pending offset 15m) > 20
+          and
+          deriv(outbox_events_pending[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The outbox of {{ $labels.application }} keeps growing (+{{ $value | printf \"%.0f\" }} in 15 minutes)"
+          description: "{{ $labels.application }} writes outbox events faster than its relay publishes them, or Kafka is slow. The backlog is {{ $value | printf \"%.0f\" }} rows larger than 15 minutes ago and still rising."
+
+      - alert: OutboxBacklogCritical
+        expr: |
+          outbox_events_pending > 1000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.application }} outbox holds {{ $value | printf \"%.0f\" }} unpublished events"
+          description: "More than 1000 events wait in the outbox of {{ $labels.application }}. The database table grows with every request until Kafka is back."
+
+      - alert: OutboxEventsParked
+        # Parked rows are never retried by the relay: they hit a permanent error
+        # (record too large, invalid topic, serialization). The relay logged the id and
+        # the SQL to unpark it.
+        expr: |
+          outbox_events_parked > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} has {{ $value | printf \"%.0f\" }} parked outbox event(s)"
+          description: "The relay of {{ $labels.application }} gave up on {{ $value | printf \"%.0f\" }} event(s) after a permanent publish error; they are never retried. The ERROR log line has the row id, the cause and the UPDATE that unparks it."
+
+      - alert: OutboxPublishFailing
+        expr: |
+          sum by (application) (rate(outbox_publish_failures_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} cannot publish to Kafka"
+          description: "The outbox relay of {{ $labels.application }} has been failing to publish for 5 minutes ({{ $value | printf \"%.2f\" }} failures/s, with back-off). Kafka is down or unreachable; requests still succeed and the events wait in the outbox."
+
+      - alert: OutboxRelayStalled
+        # Pending rows but not one acknowledged in ten minutes, and no failed attempts
+        # to explain it (a Kafka outage is OutboxPublishFailing): the relay thread
+        # itself is not running.
+        expr: |
+          outbox_events_pending > 0
+          unless on (instance)
+          (increase(outbox_events_published_total[10m]) > 0)
+          unless on (instance)
+          (increase(outbox_publish_failures_total[10m]) > 0)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The outbox relay of {{ $labels.application }} is stalled"
+          description: "{{ $labels.application }} has {{ $value | printf \"%.0f\" }} pending outbox event(s) and has published none for 10 minutes. The relay (@Scheduled) is not running or is stuck; restart the service."

@@ -61,11 +61,20 @@ jobs:
             PY
       - setup_remote_docker
       - run:
-          name: Validate Prometheus configuration and rules
+          name: Validate Prometheus configuration and rules, and run the alert rule unit tests
           command: docker build --target prometheus-validation --file .circleci/validate.Dockerfile .
       - run:
           name: Validate Alertmanager configuration
           command: docker build --target alertmanager-validation --file .circleci/validate.Dockerfile .
+      - run:
+          name: Validate Loki configuration
+          command: docker build --target loki-validation --file .circleci/validate.Dockerfile .
+      - run:
+          name: Validate Promtail configuration
+          command: docker build --target promtail-validation --file .circleci/validate.Dockerfile .
+      - run:
+          name: Validate Tempo configuration
+          command: docker build --target tempo-validation --file .circleci/validate.Dockerfile .
       - run:
           name: Package monitoring configuration
           command: |

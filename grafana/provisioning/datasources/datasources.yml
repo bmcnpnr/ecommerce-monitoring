@@ -25,8 +25,11 @@ datasources:
     editable: false
     jsonData:
       derivedFields:
+        # Every service logs "... [correlationId] [traceId] LEVEL ..." (32 hex
+        # characters between the second pair of brackets, empty outside a trace).
+        # A correlation id is a UUID with dashes, so this cannot match one.
         - datasourceUid: tempo
-          matcherRegex: '"traceId":"(\w+)"'
+          matcherRegex: '\[([0-9a-f]{32})\]'
           name: TraceID
           url: '$${__value.raw}'
 
@@ -39,8 +42,13 @@ datasources:
     jsonData:
       tracesToLogsV2:
         datasourceUid: loki
+        # The span's service.name is the `service` stream label promtail sets.
+        tags:
+          - key: service.name
+            value: service
         spanStartTimeShift: '-1h'
         spanEndTimeShift: '1h'
+        # Adds |= "<traceId>" to the query; the id is in every log line.
         filterByTraceID: true
         filterBySpanID: false
       serviceMap:

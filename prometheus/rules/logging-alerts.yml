@@ -1,0 +1,171 @@
+# Log-explosion and logging-pipeline alerts.
+#
+# The incident behind them: notification-service re-read one undeserializable
+# Kafka record in a tight loop and logged a stack trace per poll, 992 GB in 17 h,
+# which filled the Docker VM disk. Nothing in the platform noticed, because no
+# rule looked at how much was being logged. Three independent signals now do:
+#
+#   logback_events_total   events each JVM logged, by level (counted in the app,
+#                          so it works whatever Promtail does with the lines)
+#   promtail_custom_log_*  entries and bytes each container wrote, JVM or not
+#                          (Kafka, nginx), counted before Promtail drops anything
+#   loki_discarded_*       what Loki refused, and tempo_discarded_spans_total
+#
+# Thresholds are sized against the platform's normal volume: an idle service logs
+# a few lines a minute, the k6 `load` profile a few dozen a second; promtail sheds
+# a container at 300 entries/s and Loki refuses a stream at 128 KB/s, so the
+# "critical" levels sit just above what the pipeline would already be shedding.
+groups:
+  - name: logging.volume
+    interval: 30s
+    rules:
+      - alert: ServiceLogRateHigh
+        # All levels: a DEBUG flood (LOGGING_LEVEL_COM_ECOMMERCE=DEBUG left on) fills the
+        # container's json log even though Promtail does not ship it.
+        expr: |
+          sum by (service) (rate(logback_events_total{group="application"}[5m])) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} is logging {{ $value | printf \"%.0f\" }} events/s"
+          description: "{{ $labels.service }} has logged more than 100 events/s for 10 minutes (an idle service logs a few a minute). A retry loop or an unthrottled error path is the usual cause: Loki → {service=\"{{ $labels.service }}\"}, or the volume per level on the Logging & Reliability dashboard."
+
+      - alert: ServiceLogRateCritical
+        expr: |
+          sum by (service) (rate(logback_events_total{group="application"}[5m])) > 1000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Log explosion in {{ $labels.service }}: {{ $value | printf \"%.0f\" }} events/s"
+          description: "{{ $labels.service }} is logging more than 1000 events/s, well past what Promtail ships (300/s per container). At this rate the Docker VM disk fills in hours (the 992 GB incident was ~100000/s). Find the loop with `docker logs --tail 50 {{ $labels.service }}`."
+
+      - alert: ServiceErrorLogRateHigh
+        # Stack traces are throttled to one per distinct failure per 10 s, so one
+        # failing call site logs at most 0.1 ERROR/s. Half an error a second for ten
+        # minutes is five failure sites at once, or an ERROR that is not throttled.
+        expr: |
+          sum by (service) (rate(logback_events_total{group="application", level="error"}[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} keeps logging errors ({{ $value | printf \"%.2f\" }}/s)"
+          description: "{{ $labels.service }} has logged more than 0.5 ERROR events/s for 10 minutes. Loki: {service=\"{{ $labels.service }}\", level=\"ERROR\"}."
+
+      - alert: ServiceErrorLogRateCritical
+        expr: |
+          sum by (service) (rate(logback_events_total{group="application", level="error"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error-log flood in {{ $labels.service }}: {{ $value | printf \"%.0f\" }} ERROR events/s"
+          description: "{{ $labels.service }} logs more than 10 ERROR events/s, so the exception handler is not throttling (LogThrottle). Expect disk and Loki pressure within minutes."
+
+      - alert: ContainerLogVolumeHigh
+        # Promtail counts every container, including Kafka and nginx that have no
+        # logback metric, and counts before it drops, so a runaway shows its real size.
+        expr: |
+          sum by (container) (rate(promtail_custom_log_bytes_total[5m])) > 102400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.container }} is writing {{ $value | humanize1024 }}B/s of logs"
+          description: "{{ $labels.container }} has written more than 100 KB/s of log output for 5 minutes (8.6 GB/day). Docker keeps 150 MB of it, Loki refuses a stream above 128 KB/s."
+
+      - alert: ContainerLogVolumeCritical
+        expr: |
+          sum by (container) (rate(promtail_custom_log_bytes_total[5m])) > 1048576
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Log explosion in container {{ $labels.container }}: {{ $value | humanize1024 }}B/s"
+          description: "{{ $labels.container }} is writing more than 1 MB/s of logs (86 GB/day). Promtail is already dropping the excess; stop the cause."
+
+  - name: logging.pipeline
+    interval: 30s
+    rules:
+      - alert: PromtailDroppingLogs
+        # logentry_dropped_lines_by_label_total comes from the per-container rate limit
+        # in the pipeline (promtail-config.yml); reason debug_log_dropped is the normal
+        # DEBUG filter and is not counted here.
+        expr: |
+          sum by (label_value) (rate(logentry_dropped_lines_by_label_total{label_name="container"}[2m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Promtail is shedding logs from {{ $labels.label_value }}"
+          description: "Promtail drops {{ $value | printf \"%.0f\" }} lines/s from container {{ $labels.label_value }} (its limit is 300 entries/s), so Loki holds only part of what it logged. `docker logs` still has the rest."
+
+      - alert: PromtailDroppedEntries
+        # Entries lost after the retries ran out or Loki answered 4xx.
+        expr: |
+          sum by (reason) (rate(promtail_dropped_entries_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Promtail cannot deliver logs to Loki ({{ $labels.reason }})"
+          description: "Promtail gave up on {{ $value | printf \"%.1f\" }} entries/s, reason {{ $labels.reason }}. Check `docker logs promtail` and the Loki alerts."
+
+      - alert: LokiRateLimitingLogs
+        expr: |
+          sum by (reason) (rate(loki_discarded_samples_total{reason=~"rate_limited|per_stream_rate_limit"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki is refusing log lines ({{ $labels.reason }})"
+          description: "Loki discards {{ $value | printf \"%.1f\" }} lines/s over its ingestion limit ({{ $labels.reason }}: 128 KB/s per stream, 512 KB/s for the whole stack). Something is logging far above normal: see ServiceLogRateHigh and ContainerLogVolumeHigh."
+
+      - alert: LokiRejectingLogs
+        # missing_labels / invalid_labels mean a Promtail pipeline is broken (the
+        # old docker discovery sent unlabelled lines); greater_than_max_sample_age
+        # and too_far_in_future mean a clock or timestamp problem.
+        expr: |
+          sum by (reason) (rate(loki_discarded_samples_total{reason!~"rate_limited|per_stream_rate_limit"}[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Loki rejects log lines ({{ $labels.reason }})"
+          description: "Loki discards {{ $value | printf \"%.2f\" }} lines/s for reason {{ $labels.reason }}. The Promtail configuration or a client clock is wrong."
+
+      - alert: PromtailNoActiveTargets
+        # On Kubernetes a missing __host__ relabel or HOSTNAME discards every target
+        # silently; under compose it means no application container is running.
+        expr: |
+          promtail_targets_active_total == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Promtail is tailing no containers"
+          description: "promtail_targets_active_total has been 0 for 10 minutes, so no logs reach Loki. Under Kubernetes check the __host__ relabel and HOSTNAME in k8s/60-monitoring.yaml."
+
+      - alert: TempoDiscardingSpans
+        expr: |
+          sum by (reason) (rate(tempo_discarded_spans_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tempo is discarding spans ({{ $labels.reason }})"
+          description: "Tempo drops {{ $value | printf \"%.1f\" }} spans/s, reason {{ $labels.reason }} (ingestion limit 1 MB/s, 2 MB per trace). A request storm is being traced at 100 %; traces of that period are incomplete."
+
+      - alert: MonitoringStackDown
+        # ServiceDown only covers group="application"; without this a dead Promtail,
+        # Loki or Tempo is silent: logs and traces just stop.
+        expr: |
+          up{group="monitoring"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is down"
+          description: "Prometheus cannot scrape {{ $labels.service }} ({{ $labels.instance }}). Logs or traces are not being collected."

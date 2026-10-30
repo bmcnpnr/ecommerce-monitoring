@@ -1,0 +1,147 @@
+# promtool test rules prometheus/tests/infrastructure-alerts.test.yml
+#
+# node-exporter filesystem series carry {device, fstype, mountpoint}. The disk rules
+# select real filesystems by type and fold mountpoints of one device together; the
+# runaway case is the 2026-08-15 incident: 992 GB in 17 h = 58 GB/h on a 1 TB disk.
+rule_files:
+  - ../rules/infrastructure-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a log explosion on the docker data disk is caught long before it is full
+    interval: 5m
+    input_series:
+      # 600 GB free, then 58 GB/h = 4.83 GB per 5 minutes; 1 TB device, mounted twice
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '600000000000-4830000000x120'
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/run/desktop/docker"}'
+        values: '600000000000-4830000000x120'
+      - series: 'node_filesystem_size_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '1000000000000x120'
+      - series: 'node_filesystem_size_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/run/desktop/docker"}'
+        values: '1000000000000x120'
+    promql_expr_test:
+      # 1 hour in: nothing to predict from yet beyond the for: window
+      - expr: 'ALERTS{alertname="HostDiskWillFillWithin24h", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []
+      # 3 hours in: 600 - 174 = 426 GB left; 24 h at 58 GB/h needs 1392 GB: warning, one alert for the device
+      - expr: 'ALERTS{alertname="HostDiskWillFillWithin24h", alertstate="firing"}'
+        eval_time: 3h
+        exp_samples:
+          - labels: 'ALERTS{alertname="HostDiskWillFillWithin24h", alertstate="firing", instance="node-exporter:9100", device="/dev/sdd", severity="warning"}'
+            value: 1
+      # still 426 GB left and 4 h at 58 GB/h is 232 GB: not yet critical
+      - expr: 'ALERTS{alertname="HostDiskWillFillWithin4h", alertstate="firing"}'
+        eval_time: 3h
+        exp_samples: []
+      # 8 hours in: 136 GB left, 4 h needs 232 GB: critical, 8 h before it would actually fill
+      - expr: 'ALERTS{alertname="HostDiskWillFillWithin4h", alertstate="firing"}'
+        eval_time: 8h
+        exp_samples:
+          - labels: 'ALERTS{alertname="HostDiskWillFillWithin4h", alertstate="firing", instance="node-exporter:9100", device="/dev/sdd", severity="critical"}'
+            value: 1
+
+  - name: a flat disk, a sawtooth of docker builds and tmpfs never alert
+    interval: 5m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '400000000000x120'
+      # +/- 20 GB builds that are cleaned up
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sde", fstype="xfs", mountpoint="/data"}'
+        values: '500000000000 480000000000 460000000000 500000000000 500000000000 480000000000 460000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000 500000000000'
+      # a tmpfs filling up is not a disk
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: '100000000-2000000x40'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname=~"HostDisk.*", alertstate="firing"}'
+        eval_time: 3h
+        exp_samples: []
+
+  - name: low free space is reported per device, whatever its mountpoint
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '90000000000x30'
+      - series: 'node_filesystem_size_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '1000000000000x30'
+      # the same device bind-mounted elsewhere
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/etc/hosts"}'
+        values: '90000000000x30'
+      - series: 'node_filesystem_size_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/etc/hosts"}'
+        values: '1000000000000x30'
+      # a tmpfs at 1 % free is fine
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: '1000000x30'
+      - series: 'node_filesystem_size_bytes{instance="node-exporter:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: '100000000x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="HostDiskSpaceLow", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="HostDiskSpaceLow", alertstate="firing", instance="node-exporter:9100", device="/dev/sdd", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="HostDiskSpaceCritical", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples: []
+
+  - name: below 5 percent free is critical
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '40000000000x30'
+      - series: 'node_filesystem_size_bytes{instance="node-exporter:9100", device="/dev/sdd", fstype="ext4", mountpoint="/var/lib/docker"}'
+        values: '1000000000000x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="HostDiskSpaceCritical", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="HostDiskSpaceCritical", alertstate="firing", instance="node-exporter:9100", device="/dev/sdd", severity="critical"}'
+            value: 1
+
+  - name: the TSDB near its size limit warns, an unset limit never does
+    interval: 1m
+    input_series:
+      - series: 'prometheus_tsdb_storage_blocks_bytes{job="prometheus", service="prometheus", instance="localhost:9090"}'
+        values: '5000000000x60'
+      - series: 'prometheus_tsdb_retention_limit_bytes{job="prometheus", service="prometheus", instance="localhost:9090"}'
+        values: '5368709120x60'
+      # a second Prometheus with no size limit
+      - series: 'prometheus_tsdb_storage_blocks_bytes{job="other", service="other", instance="other:9090"}'
+        values: '5000000000x60'
+      - series: 'prometheus_tsdb_retention_limit_bytes{job="other", service="other", instance="other:9090"}'
+        values: '0x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PrometheusTsdbNearSizeLimit", alertstate="firing"}'
+        eval_time: 45m
+        exp_samples:
+          - labels: 'ALERTS{alertname="PrometheusTsdbNearSizeLimit", alertstate="firing", job="prometheus", service="prometheus", instance="localhost:9090", severity="warning"}'
+            value: 1
+
+  - name: a scrape over the sample limit and a dead exporter
+    interval: 1m
+    input_series:
+      - series: 'prometheus_target_scrapes_exceeded_sample_limit_total{job="prometheus", instance="localhost:9090"}'
+        values: '0x10 3x20'
+      - series: 'up{job="kafka-exporter", service="kafka", group="messaging", instance="kafka-exporter:9308"}'
+        values: '0x30'
+      - series: 'up{job="node-exporter", service="node-exporter", group="infrastructure", instance="node-exporter:9100"}'
+        values: '1x30'
+      # application targets are ServiceDown's business
+      - series: 'up{job="order-service", service="order-service", group="application", instance="order-service:8084"}'
+        values: '0x30'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PrometheusSampleLimitExceeded", alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="PrometheusSampleLimitExceeded", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples:
+          - labels: 'ALERTS{alertname="PrometheusSampleLimitExceeded", alertstate="firing", job="prometheus", instance="localhost:9090", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ExporterDown", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ExporterDown", alertstate="firing", job="kafka-exporter", service="kafka", group="messaging", instance="kafka-exporter:9308", severity="warning"}'
+            value: 1

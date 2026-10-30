@@ -1,0 +1,254 @@
+{
+  "title": "Logging & Reliability",
+  "uid": "ecommerce-logging",
+  "tags": ["ecommerce", "logging", "kafka", "reliability"],
+  "description": "Where a log explosion, a stuck consumer or a filling disk shows first: log volume per service and container, what Promtail, Loki and Tempo shed, dead-letter topics, consumer progress, outbox backlog and disk headroom. Alerts: logging-alerts.yml, kafka-alerts.yml, outbox-alerts.yml, infrastructure-alerts.yml.",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Log Events/s (all services)",
+      "description": "logback_events_total, all levels. Warning above 100/s per service, critical above 1000/s.",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 1000 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(rate(logback_events_total{group=\"application\"}[5m]))", "legendFormat": "events/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 2, "type": "stat", "title": "ERROR Events/s",
+      "description": "Throttled exception handlers log at most 0.1/s per failure site; sustained above 0.5/s warns.",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 10 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(rate(logback_events_total{group=\"application\", level=\"error\"}[5m]))", "legendFormat": "errors/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 3, "type": "stat", "title": "Container Logs per Day at This Rate",
+      "description": "All containers Promtail reads (JVMs, Kafka, nginx), extrapolated from the last 5 minutes.",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1000000000 }, { "color": "red", "value": 10000000000 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(rate(promtail_custom_log_bytes_total[5m])) * 86400", "legendFormat": "per day" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 4, "type": "stat", "title": "Lines Shed by Promtail/s",
+      "description": "Dropped by the per-container limit (300 entries/s). Non-zero means a container is logging far above normal.",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(rate(logentry_dropped_lines_by_label_total{label_name=\"container\"}[5m])) or vector(0)", "legendFormat": "lines/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 5, "type": "stat", "title": "Lines Refused by Loki/s",
+      "description": "loki_discarded_samples_total: rate limits (128 KB/s per stream, 512 KB/s total) and rejected entries.",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.1 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(rate(loki_discarded_samples_total[5m])) or vector(0)", "legendFormat": "lines/s" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 6, "type": "stat", "title": "Dead-Letter Records Retained",
+      "description": "Records in the <topic>.DLT topics that nobody has handled (newest offset minus oldest retained offset).",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 100 }] }
+        }
+      },
+      "targets": [{ "expr": "sum(kafka_topic_partition_current_offset{topic=~\".+\\\\.DLT\"} - kafka_topic_partition_oldest_offset{topic=~\".+\\\\.DLT\"}) or vector(0)", "legendFormat": "records" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Log Events/s by Service",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } } },
+      "targets": [{
+        "expr": "sum by (service) (rate(logback_events_total{group=\"application\"}[1m]))",
+        "legendFormat": "{{service}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "ERROR and WARN Events/s by Service",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "sum by (service) (rate(logback_events_total{group=\"application\", level=\"error\"}[1m]))", "legendFormat": "ERROR {{service}}" },
+        { "expr": "sum by (service) (rate(logback_events_total{group=\"application\", level=\"warn\"}[1m]))", "legendFormat": "WARN {{service}}" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Container Log Volume (Promtail, bytes/s)",
+      "description": "Counted before anything is dropped; includes Kafka and nginx.",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "fillOpacity": 10 } } },
+      "targets": [{
+        "expr": "sum by (container) (rate(promtail_custom_log_bytes_total[1m]))",
+        "legendFormat": "{{container}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Lines Shed by Promtail, per Container",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "sum by (label_value) (rate(logentry_dropped_lines_by_label_total{label_name=\"container\"}[1m]))", "legendFormat": "{{label_value}}" },
+        { "expr": "sum by (reason) (rate(promtail_dropped_entries_total[1m]))", "legendFormat": "undeliverable ({{reason}})" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Loki: Lines Refused by Reason",
+      "gridPos": { "x": 0, "y": 20, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum by (reason) (rate(loki_discarded_samples_total[1m]))",
+        "legendFormat": "{{reason}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Loki: Bytes Received/s (limit 512 KB/s)",
+      "gridPos": { "x": 8, "y": 20, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "fillOpacity": 10 } } },
+      "targets": [{ "expr": "sum(rate(loki_distributor_bytes_received_total[1m]))", "legendFormat": "received" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Tempo: Spans Discarded by Reason",
+      "gridPos": { "x": 16, "y": 20, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum by (reason) (rate(tempo_discarded_spans_total[1m]))",
+        "legendFormat": "{{reason}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "Dead-Letter Records Retained, per Topic",
+      "gridPos": { "x": 0, "y": 28, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum by (topic) (kafka_topic_partition_current_offset{topic=~\".+\\\\.DLT\"} - kafka_topic_partition_oldest_offset{topic=~\".+\\\\.DLT\"})",
+        "legendFormat": "{{topic}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Consumer Lag (a stuck consumer: lag with no commits)",
+      "gridPos": { "x": 8, "y": 28, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag)",
+        "legendFormat": "{{consumergroup}} / {{topic}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "Consumer Commit Rate (records/s)",
+      "description": "Flat at 0 while the lag next to it is above 0 = stuck (alert KafkaConsumerStuck).",
+      "gridPos": { "x": 16, "y": 28, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{
+        "expr": "sum by (consumergroup, topic) (rate(kafka_consumergroup_current_offset[5m]))",
+        "legendFormat": "{{consumergroup}} / {{topic}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 17, "type": "timeseries", "title": "Outbox: Events Waiting",
+      "description": "Rows written in the request transaction and not yet acknowledged by Kafka.",
+      "gridPos": { "x": 0, "y": 36, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "outbox_events_pending", "legendFormat": "{{application}}" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 18, "type": "timeseries", "title": "Outbox: Parked Rows and Publish Failures/s",
+      "gridPos": { "x": 8, "y": 36, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "outbox_events_parked", "legendFormat": "parked {{application}}" },
+        { "expr": "sum by (application) (rate(outbox_publish_failures_total[1m]))", "legendFormat": "failures/s {{application}}" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 19, "type": "timeseries", "title": "Outbox: Events Published/s",
+      "gridPos": { "x": 16, "y": 36, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sum by (application) (rate(outbox_events_published_total[1m]))", "legendFormat": "{{application}}" }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 20, "type": "timeseries", "title": "Free Space per Disk (%)",
+      "description": "Real filesystems only (tmpfs, overlay, squashfs excluded); mountpoints of one device are folded together.",
+      "gridPos": { "x": 0, "y": 44, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "targets": [{
+        "expr": "100 * min by (device) (node_filesystem_avail_bytes{fstype!~\"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs\"})",
+        "legendFormat": "{{device}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "Free Space Predicted in 24 h (trend of the last 6 h)",
+      "description": "Below zero = the disk fills within a day (alert HostDiskWillFillWithin24h).",
+      "gridPos": { "x": 8, "y": 44, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{
+        "expr": "min by (device) (predict_linear(node_filesystem_avail_bytes{fstype!~\"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs\"}[6h], 24 * 3600))",
+        "legendFormat": "{{device}}"
+      }],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "Prometheus TSDB Size vs Limit",
+      "gridPos": { "x": 16, "y": 44, "w": 8, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        { "expr": "prometheus_tsdb_storage_blocks_bytes", "legendFormat": "blocks" },
+        { "expr": "prometheus_tsdb_retention_limit_bytes", "legendFormat": "limit" }
+      ],
+      "datasource": "Prometheus"
+    },
+    {
+      "id": 23, "type": "logs", "title": "Recent ERROR Log Lines (Loki)",
+      "description": "Stack traces are one entry each. Click a line for its correlationId, traceId and thread; the traceId opens the trace in Tempo.",
+      "gridPos": { "x": 0, "y": 52, "w": 24, "h": 10 },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true },
+      "targets": [{ "expr": "{service=~\".+\", level=\"ERROR\"}", "refId": "A" }],
+      "datasource": "Loki"
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+# promtool test rules prometheus/tests/database-alerts.test.yml
+rule_files:
+  - ../rules/database-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a single deadlock is reported (the old rate() with for 5m could not fire on one)
+    interval: 1m
+    input_series:
+      - series: 'pg_stat_database_deadlocks{datname="orderdb", database="orderdb", service="postgres"}'
+        values: '0x10 1x40'
+      # the template and maintenance databases are ignored
+      - series: 'pg_stat_database_deadlocks{datname="postgres", database="orderdb", service="postgres"}'
+        values: '0x10 4x40'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="PostgresDeadlocks", alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="PostgresDeadlocks", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples:
+          - labels: 'ALERTS{alertname="PostgresDeadlocks", alertstate="firing", datname="orderdb", database="orderdb", service="postgres", severity="warning"}'
+            value: 1
+      # ten minutes after the last one it resolves
+      - expr: 'ALERTS{alertname="PostgresDeadlocks", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples: []
+
+  # Label sets as Micrometer exports the Hikari meters (pool name) plus the common tags.
+  - name: a request that timed out waiting for a pooled connection is reported
+    interval: 1m
+    input_series:
+      - series: 'hikaricp_connections_timeout_total{application="product-service", pool="HikariPool-1"}'
+        values: '0x10 3x40'
+      - series: 'hikaricp_connections_timeout_total{application="review-service", pool="HikariPool-1"}'
+        values: '0x50'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="DatabasePoolTimeouts", alertstate="firing"}'
+        eval_time: 8m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="DatabasePoolTimeouts", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples:
+          - labels: 'ALERTS{alertname="DatabasePoolTimeouts", alertstate="firing", application="product-service", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="DatabasePoolTimeouts", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples: []
+
+  - name: connections queuing for two minutes is saturation, a blip is not
+    interval: 1m
+    input_series:
+      - series: 'hikaricp_connections_pending{application="order-service", pool="HikariPool-1"}'
+        values: '0x5 4x5 0x20'
+      - series: 'hikaricp_connections_pending{application="user-service", pool="HikariPool-1"}'
+        values: '0x5 2 0x25'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="DatabasePoolSaturated", alertstate="firing"}'
+        eval_time: 9m
+        exp_samples:
+          - labels: 'ALERTS{alertname="DatabasePoolSaturated", alertstate="firing", application="order-service", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="DatabasePoolSaturated", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []

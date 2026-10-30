@@ -1,0 +1,131 @@
+# promtool test rules prometheus/tests/outbox-alerts.test.yml
+#
+# Series as Micrometer exports them from order-, payment- and shipping-service:
+#   outbox_events_pending, outbox_events_parked   gauges
+#   outbox_events_published_total, outbox_publish_failures_total   counters
+rule_files:
+  - ../rules/outbox-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a healthy relay keeps the table empty
+    interval: 1m
+    input_series:
+      - series: 'outbox_events_pending{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '0x60'
+      - series: 'outbox_events_parked{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '0x60'
+      - series: 'outbox_events_published_total{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '0+30x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname=~"Outbox.*", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: Kafka down - the backlog grows, publishing fails, and the relay is not reported as stalled
+    interval: 1m
+    input_series:
+      - series: 'outbox_events_pending{application="payment-service", service="payment-service", instance="payment-service:8085"}'
+        values: '0+25x60'
+      - series: 'outbox_events_published_total{application="payment-service", service="payment-service", instance="payment-service:8085"}'
+        values: '500x60'
+      - series: 'outbox_publish_failures_total{application="payment-service", service="payment-service", instance="payment-service:8085"}'
+        values: '0+2x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="OutboxBacklog", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples:
+          - labels: 'ALERTS{alertname="OutboxBacklog", alertstate="firing", application="payment-service", service="payment-service", instance="payment-service:8085", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="OutboxPublishFailing", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples:
+          - labels: 'ALERTS{alertname="OutboxPublishFailing", alertstate="firing", application="payment-service", severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="OutboxRelayStalled", alertstate="firing"}'
+        eval_time: 40m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="OutboxBacklogCritical", alertstate="firing"}'
+        eval_time: 20m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="OutboxBacklogCritical", alertstate="firing"}'
+        eval_time: 55m
+        exp_samples:
+          - labels: 'ALERTS{alertname="OutboxBacklogCritical", alertstate="firing", application="payment-service", service="payment-service", instance="payment-service:8085", severity="critical"}'
+            value: 1
+
+  - name: a short backlog that drains is not an alert
+    interval: 1m
+    input_series:
+      - series: 'outbox_events_pending{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '300x3 0x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="OutboxBacklog", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples: []
+
+  - name: parked rows need a person
+    interval: 1m
+    input_series:
+      - series: 'outbox_events_parked{application="shipping-service", service="shipping-service", instance="shipping-service:8086"}'
+        values: '0x5 1x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="OutboxEventsParked", alertstate="firing"}'
+        eval_time: 8m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="OutboxEventsParked", alertstate="firing"}'
+        eval_time: 15m
+        exp_samples:
+          - labels: 'ALERTS{alertname="OutboxEventsParked", alertstate="firing", application="shipping-service", service="shipping-service", instance="shipping-service:8086", severity="warning"}'
+            value: 1
+
+  - name: pending rows with no publishes and no failures means the relay is not running
+    interval: 1m
+    input_series:
+      - series: 'outbox_events_pending{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '0x5 3x60'
+      - series: 'outbox_events_published_total{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '100x65'
+      - series: 'outbox_publish_failures_total{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '0x65'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="OutboxRelayStalled", alertstate="firing"}'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="OutboxRelayStalled", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples:
+          - labels: 'ALERTS{alertname="OutboxRelayStalled", alertstate="firing", application="order-service", service="order-service", instance="order-service:8084", severity="critical"}'
+            value: 1
+
+  - name: a relay that is publishing is not stalled even with rows pending
+    interval: 1m
+    input_series:
+      - series: 'outbox_events_pending{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '3x60'
+      - series: 'outbox_events_published_total{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '0+20x60'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="OutboxRelayStalled", alertstate="firing"}'
+        eval_time: 50m
+        exp_samples: []
+
+  - name: a backlog that keeps growing is reported before it is large, a steady ripple is not
+    interval: 1m
+    input_series:
+      # +2 rows a minute: 30 more than 15 minutes ago, still rising
+      - series: 'outbox_events_pending{application="shipping-service", service="shipping-service", instance="shipping-service:8086"}'
+        values: '0+2x60'
+      # bounces between 10 and 14 for ever
+      - series: 'outbox_events_pending{application="order-service", service="order-service", instance="order-service:8084"}'
+        values: '10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14 10 14'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="OutboxBacklogGrowing", alertstate="firing"}'
+        eval_time: 12m
+        exp_samples: []
+      - expr: 'ALERTS{alertname="OutboxBacklogGrowing", alertstate="firing"}'
+        eval_time: 30m
+        exp_samples:
+          - labels: 'ALERTS{alertname="OutboxBacklogGrowing", alertstate="firing", application="shipping-service", service="shipping-service", instance="shipping-service:8086", severity="warning"}'
+            value: 1

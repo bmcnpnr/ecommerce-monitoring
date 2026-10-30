@@ -29,13 +29,16 @@ groups:
           description: "Connection usage is {{ $value | humanizePercentage }} of max_connections."
 
       - alert: PostgresDeadlocks
-        expr: rate(pg_stat_database_deadlocks{datname!~"template.*|postgres"}[5m]) > 0
-        for: 5m
+        # Was `rate(...[5m]) > 0` with `for: 5m`: one deadlock keeps a 5-minute rate above
+        # zero for less than 5 minutes, so an isolated deadlock could never fire; only a
+        # sustained series did. increase() with no `for` reports the first one.
+        expr: increase(pg_stat_database_deadlocks{datname!~"template.*|postgres"}[10m]) > 0
+        for: 0m
         labels:
           severity: warning
         annotations:
           summary: "PostgreSQL deadlocks detected on {{ $labels.datname }}"
-          description: "Deadlock rate: {{ $value }} per second on database {{ $labels.datname }}."
+          description: "{{ $value | printf \"%.0f\" }} deadlock(s) on database {{ $labels.datname }} in the last 10 minutes. Postgres logs both statements (`docker logs {{ $labels.datname }}`)."
 
       - alert: PostgresSlowQueries
         # Two fixes: the custom query in queries.yml emits
@@ -50,6 +53,27 @@ groups:
         annotations:
           summary: "Long-running queries on {{ $labels.datname }}"
           description: "There are queries running for more than 60 seconds on {{ $labels.datname }}."
+
+      # The services' side of the same database trouble: a request waited the whole Hikari
+      # connection-timeout (5 s) for a pooled connection and was answered 503. Hikari registers
+      # its counters at pool start, so increase() sees the first timeout.
+      - alert: DatabasePoolTimeouts
+        expr: sum by (application) (increase(hikaricp_connections_timeout_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} ran out of database connections"
+          description: "{{ $value | printf \"%.0f\" }} request(s) waited 5 s for a database connection in the last 5 minutes and got 503. The pool is exhausted (slow statements, a held row lock) or the database stopped answering: check PostgresDown, PostgresSlowQueries and hikaricp_connections_active against hikaricp_connections_max."
+
+      - alert: DatabasePoolSaturated
+        expr: max by (application) (hikaricp_connections_pending) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} has requests queuing for database connections"
+          description: "Threads have been waiting for a pooled connection for 2 minutes; requests slow down by up to 5 s and then fail with 503."
 
   # catalogdb is MongoDB (catalog-service's read model), scraped through
   # percona/mongodb_exporter; see prometheus.yml job mongodb-exporter-catalogdb.

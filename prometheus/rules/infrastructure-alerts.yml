@@ -70,22 +70,103 @@ groups:
           summary: "Host is running out of memory"
           description: "Only {{ $value | humanizePercentage }} of host memory is available."
 
+      # The three disk rules below select real filesystems by type, not
+      # mountpoint="/". On Docker Desktop `/` of the VM is not necessarily the disk that
+      # holds /var/lib/docker (the one the 992 GB incident filled), and a selector that
+      # matches nothing never fires. tmpfs/ramfs are small by design; overlay, squashfs
+      # and nsfs are already excluded by node-exporter. min by (device) folds the
+      # several mountpoints of one device (/, /var/lib/docker, /etc/hosts ...) into one
+      # alert.
       - alert: HostDiskSpaceLow
         expr: |
-          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+          min by (instance, device) (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs"}
+          ) < 0.15
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Disk space low on host"
-          description: "Only {{ $value | humanizePercentage }} disk space remaining on /."
+          summary: "Disk space low on {{ $labels.device }}"
+          description: "Only {{ $value | humanizePercentage }} of {{ $labels.device }} is free. `docker system df` shows what Docker holds; large log or volume growth shows on the Logging & Reliability dashboard."
 
       - alert: HostDiskSpaceCritical
         expr: |
-          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.05
+          min by (instance, device) (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs"}
+          ) < 0.05
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Disk space critically low on host"
-          description: "Less than 5% disk space remaining on /. Immediate action required."
+          summary: "Disk space critically low on {{ $labels.device }}"
+          description: "Less than 5% of {{ $labels.device }} is free. Immediate action required: a full disk stops every container (and Docker Desktop's WSL2 disk never shrinks again)."
+
+      # Rate-based, because a runaway fills a disk faster than a percentage threshold
+      # can warn: 992 GB in 17 h is 58 GB/h, so a 1 TB disk goes from 15 % free to full
+      # in under 3 h. The window must be long enough to ignore a `docker build`.
+      - alert: HostDiskWillFillWithin24h
+        expr: |
+          min by (instance, device) (
+            predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs"}[6h], 24 * 3600)
+          ) < 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.device }} will run out of space within 24 hours"
+          description: "At the rate of the last 6 hours {{ $labels.device }} is full within a day. Look for runaway logs (ServiceLogRateHigh, ContainerLogVolumeHigh), Kafka or Loki growth."
+
+      - alert: HostDiskWillFillWithin4h
+        expr: |
+          min by (instance, device) (
+            predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|squashfs|iso9660|overlay|nsfs"}[1h], 4 * 3600)
+          ) < 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.device }} will run out of space within 4 hours"
+          description: "At the rate of the last hour {{ $labels.device }} is full within 4 hours. This is what a log explosion looks like before the disk is full: find the container writing the most (promtail_custom_log_bytes_total, `docker ps -s`) and stop it."
+
+  # The metrics stores can outgrow their volumes too; each has a size or rate bound
+  # (prometheus --storage.tsdb.retention.size, Loki and Tempo ingestion limits), and
+  # these rules say when a bound is doing the work.
+  - name: infrastructure.monitoring
+    interval: 30s
+    rules:
+      - alert: PrometheusTsdbNearSizeLimit
+        # prometheus_tsdb_retention_limit_bytes is 0 when no size limit is set, hence the guard.
+        expr: |
+          prometheus_tsdb_storage_blocks_bytes / prometheus_tsdb_retention_limit_bytes > 0.9
+          and prometheus_tsdb_retention_limit_bytes > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus storage is at {{ $value | humanizePercentage }} of its size limit"
+          description: "The TSDB is within 10% of --storage.tsdb.retention.size, so the oldest blocks are about to be deleted before the 15-day retention. Check for a cardinality increase (prometheus_tsdb_head_series) or raise the limit."
+
+      - alert: PrometheusSampleLimitExceeded
+        expr: |
+          increase(prometheus_target_scrapes_exceeded_sample_limit_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A scrape target exceeded the sample limit"
+          description: "A target returned more than 50000 samples (global sample_limit in prometheus.yml), so its scrape failed and the target shows up == 0. A metric label is probably carrying an id; see Status → Targets for the failing job."
+
+      - alert: ExporterDown
+        # ServiceDown only selects group="application", and the kafka_brokers, pg_up and
+        # mongodb_up alerts depend on their exporter: if the exporter dies the series
+        # disappear and those rules stay silent. This one watches the scrape itself.
+        expr: |
+          up{group=~"infrastructure|messaging|database|frontend"} == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} exporter is down"
+          description: "Prometheus cannot scrape {{ $labels.service }} ({{ $labels.instance }}) for 3 minutes, so the alerts that depend on it cannot fire."
